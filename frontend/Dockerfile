@@ -14,6 +14,10 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# URL pública del API (la usa el navegador). Ej: http://TU_IP:8000 o https://api.tudominio.com
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 RUN npm run build
 
 # ── Stage 3: Production runner ─────────────────────────────────────────────────
