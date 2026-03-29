@@ -12,6 +12,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Next standalone espera /app/public en la etapa runner; si no existe en el repo, la creamos aquí
+RUN mkdir -p public
+
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # URL pública del API (la usa el navegador). Ej: http://TU_IP:8000 o https://api.tudominio.com
