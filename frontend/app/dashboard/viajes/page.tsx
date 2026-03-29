@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Plane, Plus, MapPin, Calendar, Users, Wallet,
-  CheckCircle, Clock, ChevronRight, Globe,
+  CheckCircle, Clock, ChevronRight,
 } from "lucide-react";
+import { DatePickerField } from "@/components/MiniCalendar";
 import { listTrips, createTrip } from "@/lib/api";
 import type { Trip, TripCreate } from "@/lib/types";
 
@@ -193,7 +194,7 @@ function CreateTripModal({ onClose, onCreated }: {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full sm:max-w-lg bg-[#1e293b] rounded-t-3xl sm:rounded-2xl border border-slate-700/80 shadow-2xl">
+      <div className="relative w-full sm:max-w-lg bg-[#1e293b] rounded-t-3xl sm:rounded-2xl border border-slate-700/80 shadow-2xl overflow-visible">
         <div className="flex justify-center pt-3 sm:hidden">
           <div className="w-10 h-1 rounded-full bg-slate-600" />
         </div>
@@ -209,22 +210,26 @@ function CreateTripModal({ onClose, onCreated }: {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-visible">
           <FormField label="Nombre del viaje *" value={name} onChange={setName} placeholder="Ej: Bariloche 2026" required />
           <FormField label="Destino" value={destination} onChange={setDestination} placeholder="Ej: Bariloche, Río Negro" icon={<MapPin className="w-4 h-4" />} />
           <FormField label="Descripción" value={description} onChange={setDescription} placeholder="Opcional..." />
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">Fecha de salida</label>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
-                className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 [color-scheme:dark]" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">Fecha de regreso</label>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
-                className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 [color-scheme:dark]" />
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <DatePickerField
+              label="Fecha de salida"
+              value={startDate}
+              onChange={setStartDate}
+              maxDate={endDate || undefined}
+              placeholder="Elegí la salida"
+            />
+            <DatePickerField
+              label="Fecha de regreso"
+              value={endDate}
+              onChange={setEndDate}
+              minDate={startDate || undefined}
+              placeholder="Elegí el regreso"
+            />
           </div>
 
           <div>
