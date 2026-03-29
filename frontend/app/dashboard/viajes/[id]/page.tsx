@@ -18,6 +18,7 @@ import type {
 } from "@/lib/types";
 import { useUser } from "@/lib/UserContext";
 import AIChatWidget from "@/components/AIChatWidget";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 const CATEGORIES: ExpenseCategory[] = [
   "Supermercado", "Transporte", "Suscripciones", "Ocio", "Salud", "Otro",
@@ -63,6 +64,10 @@ export default function TripDetailPage() {
   const [settlement, setSettlement] = useState<TripSettlement | null>(null);
   const [settlLoading, setSettlLoading] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<
+    null | { type: "remove"; userId: string } | { type: "delete"; expenseId: number }
+  >(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
   const fetchTrip = useCallback(() => {
     getTrip(tripId)
@@ -98,11 +103,31 @@ export default function TripDetailPage() {
     setShowAddMember(false);
   }
 
-  async function handleRemoveMember(userId: string) {
-    if (!confirm("¿Remover a este participante del viaje?")) return;
-    await removeTripMember(tripId, userId);
-    setTrip((prev) => prev ? { ...prev, members: prev.members.filter((m) => m.user_id !== userId) } : prev);
-    setSettlement(null);
+  function requestRemoveMember(userId: string) {
+    setConfirmAction({ type: "remove", userId });
+  }
+
+  async function executeConfirm() {
+    const action = confirmAction;
+    if (!action) return;
+    setConfirmLoading(true);
+    try {
+      if (action.type === "remove") {
+        await removeTripMember(tripId, action.userId);
+        setTrip((prev) =>
+          prev ? { ...prev, members: prev.members.filter((m) => m.user_id !== action.userId) } : prev
+        );
+      } else {
+        await deleteTripExpense(tripId, action.expenseId);
+        setTrip((prev) =>
+          prev ? { ...prev, expenses: prev.expenses.filter((e) => e.id !== action.expenseId) } : prev
+        );
+      }
+      setSettlement(null);
+      setConfirmAction(null);
+    } finally {
+      setConfirmLoading(false);
+    }
   }
 
   function handleExpenseAdded(expense: TripExpense) {
@@ -110,11 +135,8 @@ export default function TripDetailPage() {
     setSettlement(null);
   }
 
-  async function handleDeleteExpense(expenseId: number) {
-    if (!confirm("¿Eliminar este gasto?")) return;
-    await deleteTripExpense(tripId, expenseId);
-    setTrip((prev) => prev ? { ...prev, expenses: prev.expenses.filter((e) => e.id !== expenseId) } : prev);
-    setSettlement(null);
+  function requestDeleteExpense(expenseId: number) {
+    setConfirmAction({ type: "delete", expenseId });
   }
 
   if (loading) {
@@ -209,7 +231,7 @@ export default function TripDetailPage() {
                 <p className="text-[10px] text-slate-500">{m.role === "Owner" ? "Organizador" : "Participante"}</p>
               </div>
               {isOwner && m.user_id !== user?.id && (
-                <button onClick={() => handleRemoveMember(m.user_id)}
+                <button onClick={() => requestRemoveMember(m.user_id)}
                   className="ml-1 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 transition">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -253,7 +275,7 @@ export default function TripDetailPage() {
                   expense={expense}
                   currency={trip.currency}
                   currentUserId={user?.id ?? ""}
-                  onDelete={() => handleDeleteExpense(expense.id)}
+                  onDelete={() => requestDeleteExpense(expense.id)}
                 />
               ))}
             </div>
@@ -283,7 +305,28 @@ export default function TripDetailPage() {
         variant="trip"
         tripId={tripId}
         tripCurrency={trip.currency}
-        onExpenseCreated={handleExpenseAdded}
+        onExpenseCreated={(e) => {
+          if ("trip_id" in e) handleExpenseAdded(e);
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmAction !== null}
+        title={
+          confirmAction?.type === "remove"
+            ? "Quitar participante"
+            : "Eliminar gasto"
+        }
+        message={
+          confirmAction?.type === "remove"
+            ? "¿Remover a este participante del viaje? No podrá ver ni cargar gastos en este viaje."
+            : "¿Eliminar este gasto del viaje? Esta acción no se puede deshacer."
+        }
+        confirmLabel={confirmAction?.type === "remove" ? "Quitar" : "Eliminar"}
+        variant="danger"
+        loading={confirmLoading}
+        onConfirm={executeConfirm}
+        onCancel={() => !confirmLoading && setConfirmAction(null)}
       />
     </div>
   );
