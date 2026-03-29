@@ -15,8 +15,9 @@ services:
     volumes:
       - db_data:/app/data
       - ./backend:/app          # hot-reload en desarrollo
+    # Puerto en el host (evita choque con otras apps, ej. 3010). Ver FINTRACK_API_PORT en .env
     ports:
-      - "8000:8000"
+      - "${FINTRACK_API_PORT:-8020}:8000"
     networks:
       - fintrack-net
     healthcheck:
@@ -36,7 +37,7 @@ services:
     container_name: fintrack-frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${FINTRACK_WEB_PORT:-3020}:3000"
     networks:
       - fintrack-net
     depends_on:
