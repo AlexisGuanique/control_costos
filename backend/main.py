@@ -1047,12 +1047,24 @@ async def create_expense_from_ai(
             bank_str = raw_bank.strip() or None
         cc_bank = _validate_expense_credit_card(current_user, payment_method, bank_str)
 
-        ai_inst = extracted.get("credit_installments")
         if payment_method != PaymentMethod.TARJETA_CREDITO or not cc_bank:
             credit_inst = 1
         else:
+            ai_inst = extracted.get("credit_installments")
+            if ai_inst is None:
+                body = AIExpenseResult(
+                    action="assistant_message",
+                    message=(
+                        "¿En cuántas cuotas lo pagaste? "
+                        'Podés decir "un solo pago" o el número de cuotas (por ejemplo 3 o 12).'
+                    ),
+                )
+                return JSONResponse(
+                    content=jsonable_encoder(body),
+                    status_code=status.HTTP_200_OK,
+                )
             try:
-                credit_inst = max(1, min(60, int(ai_inst))) if ai_inst is not None else 1
+                credit_inst = max(1, min(60, int(ai_inst)))
             except (TypeError, ValueError):
                 credit_inst = 1
 
