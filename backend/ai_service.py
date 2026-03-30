@@ -55,11 +55,12 @@ Historial reciente del chat (mantené contexto: si ya hablaron de un gasto concr
 {conversation_block}
 ---
 
-Memoria y seguimiento (muy importante):
-- Si en el historial el usuario ya pidió editar un gasto concreto (por nombre, descripción o id) y el mensaje actual solo aclara el banco, las cuotas, el medio de pago o responde a una lista de opciones (ej. "usá Supervielle", "con Galicia"), devolvé action "edit" con el MISMO expense_id que corresponde a ese gasto y un patch que combine lo pedido ahora con lo ya acordado (ej. payment_method: "Tarjeta de crédito" y credit_card_bank: "Supervielle").
-- NO pidas de nuevo "qué gasto editar" si el historial ya lo identificó, salvo que falte por completo el gasto o sea ambiguo entre varios.
-- Si el asistente listó bancos disponibles y el usuario eligió uno, aplicá ese banco al gasto que se estaba editando en el historial.
-- Preguntas como "qué bancos tengo" son aclaración: podés usar clarify con la lista, pero en el siguiente mensaje cuando el usuario elige un banco, debe ser edit sobre el gasto ya mencionado.
+Memoria y seguimiento (muy importante — no confundas ALTA con EDICIÓN):
+- **Gasto NUEVO aún no guardado** (el usuario describió monto/descripción/cuotas y el asistente preguntó algo como "¿con qué medio pagaste?" o "¿qué banco?"): el siguiente mensaje del usuario que solo aclara medio, banco o cuotas (ej. "con Galicia", "tarjeta", "en 12 cuotas") debe ser **action "create"** con un objeto **data completo** que combine TODO lo dicho en el historial + el mensaje actual. **Nunca** uses "edit" en ese caso (no hay expense_id todavía).
+- **Solo** usá **action "edit"** cuando el usuario se refiere a un gasto **ya existente** en la lista de gastos recientes (por id, por nombre que coincida con una línea, "el último", etc.) y querés cambiar campos. Ahí sí: expense_id entero + patch.
+- Si en el historial el usuario ya pidió **editar** un gasto concreto de la lista y el mensaje actual solo aclara banco/cuotas/medio, devolvé **edit** con el **mismo expense_id** y el patch correspondiente.
+- Si el asistente listó bancos disponibles y el usuario eligió uno: si era para **completar un alta**, usá **create** con data completo; si era para **cambiar un gasto ya cargado**, usá **edit** con expense_id.
+- **Nunca** devuelvas **edit** sin un **expense_id** entero válido que exista en la lista de gastos recientes (salvo que el usuario diga "último" y tomes el id de la primera línea).
 
 Reglas para tarjeta de crédito y cuotas:
 - Si el usuario pide "en N cuotas", "en 3 cuotas sin interés", etc., incluí credit_installments con el entero N (entre 1 y 60; 1 = un solo pago).
@@ -90,6 +91,110 @@ Reglas para EDITAR y ELIMINAR:
 Categorías de gasto: Supermercado, Transporte, Suscripciones, Ocio, Salud, Otro. Jerga argentina: lucas=miles, palo=millones, mangos=ARS, dólares/usd=USD, euros/EUR.
 
 NO incluyas markdown ni backticks. SOLO el JSON."""
+
+
+REPAIR_ACTION_SYSTEM_PROMPT = """La IA devolvió un JSON que no cumple las reglas o está incompleto.
+
+Tu tarea: devolvé UN SOLO JSON válido con la misma estructura que las instrucciones originales (action: create | edit | delete | clarify).
+
+Reglas críticas:
+- Si el usuario aclaraba banco, medio de pago o cuotas para un gasto NUEVO que todavía no está en la base (el asistente había preguntado cómo pagó), devolvé "action":"create" con un objeto "data" COMPLETO (description, original_amount, original_currency, category, payment_method, credit_card_bank, credit_installments, etc.) fusionando el historial del chat con el mensaje actual. NO uses "edit" sin expense_id en ese caso.
+- Usá "edit" solo si el gasto ya existe en la lista de gastos recientes y tenés un expense_id entero válido de esa lista.
+- Nunca devuelvas "edit" sin expense_id entero y patch no vacío.
+
+Gastos recientes:
+---
+{recent_expenses}
+---
+
+Medios de pago:
+---
+{payment_methods_block}
+---
+
+Bancos:
+---
+{user_banks_block}
+---
+
+Historial del chat:
+---
+{conversation_block}
+---
+
+JSON inválido o incompleto recibido:
+---
+{invalid_json}
+---
+
+Mensaje actual del usuario:
+---
+{user_message}
+---
+
+SOLO JSON, sin markdown ni backticks."""
+
+
+_REPAIR_TRIGGER_SUBSTRINGS = (
+    "Falta expense_id válido para editar",
+    "Falta expense_id válido para eliminar",
+    "Falta patch",
+    "Faltan campos en data",
+    "Falta el objeto data",
+)
+
+
+def _should_repair_expense_action_error(err: ValueError) -> bool:
+    msg = str(err)
+    return any(s in msg for s in _REPAIR_TRIGGER_SUBSTRINGS)
+
+
+def _validate_expense_action_dict(data: dict[str, Any]) -> dict[str, Any]:
+    action = data.get("action")
+    if action not in ("create", "edit", "delete", "clarify"):
+        raise ValueError(f"Acción de IA no reconocida: {data}")
+
+    if action == "clarify":
+        msg = data.get("message")
+        if not msg or not isinstance(msg, str):
+            raise ValueError("La IA no formuló una aclaración válida.")
+        return data
+
+    if action == "create":
+        inner = data.get("data")
+        if not isinstance(inner, dict):
+            raise ValueError("Falta el objeto data para crear el gasto.")
+        required_keys = {"description", "original_amount", "original_currency", "category"}
+        if not required_keys.issubset(inner.keys()):
+            raise ValueError(f"Faltan campos en data: {inner}")
+        return data
+
+    if action == "edit":
+        eid = data.get("expense_id")
+        patch = data.get("patch")
+        try:
+            eid_int = int(eid)
+        except (TypeError, ValueError):
+            raise ValueError("Falta expense_id válido para editar.") from None
+        if eid_int < 1:
+            raise ValueError("expense_id inválido.")
+        data["expense_id"] = eid_int
+        if not isinstance(patch, dict) or not patch:
+            raise ValueError("Falta patch con al menos un campo para editar.")
+        return data
+
+    if action == "delete":
+        eid = data.get("expense_id")
+        try:
+            eid_int = int(eid)
+        except (TypeError, ValueError):
+            raise ValueError("Falta expense_id válido para eliminar.") from None
+        if eid_int < 1:
+            raise ValueError("expense_id inválido.")
+        data["expense_id"] = eid_int
+        return data
+
+    raise ValueError(f"Respuesta de IA inesperada: {data}")
 
 
 def _build_trip_system_prompt(participant_names: list[str], current_user_full_name: str) -> str:
@@ -194,51 +299,54 @@ class AIService:
         except json.JSONDecodeError as e:
             raise ValueError(f"La IA devolvió una respuesta inválida: {raw}") from e
 
-        action = data.get("action")
-        if action not in ("create", "edit", "delete", "clarify"):
-            raise ValueError(f"Acción de IA no reconocida: {data}")
+        try:
+            return _validate_expense_action_dict(data)
+        except ValueError as e:
+            if not _should_repair_expense_action_error(e):
+                raise
+            repaired = await self._repair_expense_action_output(
+                invalid_json=raw,
+                user_message=user_message,
+                recent_expenses_text=recent_expenses_text,
+                payment_methods_block=payment_methods_block,
+                user_banks_block=user_banks_block,
+                conversation_block=conversation_block,
+            )
+            return _validate_expense_action_dict(repaired)
 
-        if action == "clarify":
-            msg = data.get("message")
-            if not msg or not isinstance(msg, str):
-                raise ValueError("La IA no formuló una aclaración válida.")
-            return data
-
-        if action == "create":
-            inner = data.get("data")
-            if not isinstance(inner, dict):
-                raise ValueError("Falta el objeto data para crear el gasto.")
-            required_keys = {"description", "original_amount", "original_currency", "category"}
-            if not required_keys.issubset(inner.keys()):
-                raise ValueError(f"Faltan campos en data: {inner}")
-            return data
-
-        if action == "edit":
-            eid = data.get("expense_id")
-            patch = data.get("patch")
-            try:
-                eid_int = int(eid)
-            except (TypeError, ValueError):
-                raise ValueError("Falta expense_id válido para editar.") from None
-            if eid_int < 1:
-                raise ValueError("expense_id inválido.")
-            data["expense_id"] = eid_int
-            if not isinstance(patch, dict) or not patch:
-                raise ValueError("Falta patch con al menos un campo para editar.")
-            return data
-
-        if action == "delete":
-            eid = data.get("expense_id")
-            try:
-                eid_int = int(eid)
-            except (TypeError, ValueError):
-                raise ValueError("Falta expense_id válido para eliminar.") from None
-            if eid_int < 1:
-                raise ValueError("expense_id inválido.")
-            data["expense_id"] = eid_int
-            return data
-
-        raise ValueError(f"Respuesta de IA inesperada: {data}")
+    async def _repair_expense_action_output(
+        self,
+        *,
+        invalid_json: str,
+        user_message: str,
+        recent_expenses_text: str,
+        payment_methods_block: str,
+        user_banks_block: str,
+        conversation_block: str,
+    ) -> dict[str, Any]:
+        if not self.llm:
+            raise ValueError(
+                "GEMINI_API_KEY no configurada. Por favor configure la variable de entorno."
+            )
+        system = REPAIR_ACTION_SYSTEM_PROMPT.format(
+            recent_expenses=recent_expenses_text,
+            payment_methods_block=payment_methods_block,
+            user_banks_block=user_banks_block,
+            conversation_block=conversation_block,
+            invalid_json=invalid_json,
+            user_message=user_message,
+        )
+        messages = [
+            SystemMessage(content=system),
+            HumanMessage(content="Devolvé el JSON corregido."),
+        ]
+        response = await self.llm.ainvoke(messages)
+        raw = response.content.strip()
+        raw = re.sub(r"```(?:json)?\s*", "", raw).strip()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"La IA no pudo corregir la respuesta: {raw}") from e
 
     async def extract_trip_expense(
         self,
