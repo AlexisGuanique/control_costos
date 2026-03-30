@@ -32,7 +32,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0f172a]">
+    <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 overflow-hidden bg-[#0f172a]">
       {/* Sidebar — fixed overlay on mobile, flex child on desktop */}
       <Sidebar
         user={user}
@@ -42,7 +42,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       />
 
       {/* Content area — always full width on mobile, flex-1 on desktop */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-w-0">
         {/* Mobile top bar */}
         <header className="lg:hidden flex items-center gap-3 px-4 h-14 shrink-0 bg-[#1e293b]/90 backdrop-blur-lg border-b border-slate-700/60">
           <button
@@ -60,7 +60,9 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+          {children}
+        </main>
       </div>
     </div>
   );
