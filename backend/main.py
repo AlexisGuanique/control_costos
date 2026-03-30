@@ -192,12 +192,26 @@ def _paid_fixed_expense_ids(
     return set(rows)
 
 
+def _normalize_amount_currency(currency: str) -> str:
+    c = (currency or "ARS").upper().strip()
+    allowed = {"ARS", "USD", "EUR"}
+    if c not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Moneda no soportada. Usá ARS, USD o EUR.",
+        )
+    return c
+
+
 def _fixed_expense_read(row: FixedExpense, paid_this_period: bool) -> FixedExpenseRead:
     return FixedExpenseRead(
         id=row.id,
         user_id=row.user_id,
         name=row.name,
         amount=row.amount,
+        original_amount=getattr(row, "original_amount", None),
+        original_currency=getattr(row, "original_currency", None),
+        exchange_rate_used=getattr(row, "exchange_rate_used", None),
         is_active=row.is_active,
         due_day=row.due_day,
         created_at=row.created_at,
@@ -846,7 +860,7 @@ def list_fixed_expenses(
     response_model=FixedExpenseRead,
     status_code=status.HTTP_201_CREATED,
 )
-def create_fixed_expense(
+async def create_fixed_expense(
     data: FixedExpenseCreate,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
@@ -863,10 +877,19 @@ def create_fixed_expense(
             detail="El monto no puede ser negativo",
         )
     _validate_due_day(data.due_day)
+    curr = _normalize_amount_currency(data.amount_currency)
+    base_amt, rate = await convert_original_to_base(
+        data.amount,
+        curr,
+        current_user.base_currency.upper(),
+    )
     row = FixedExpense(
         user_id=current_user.id,
         name=name,
-        amount=round(data.amount, 2),
+        amount=base_amt,
+        original_amount=round(data.amount, 2),
+        original_currency=curr,
+        exchange_rate_used=rate,
         is_active=True,
         due_day=data.due_day,
     )
@@ -877,7 +900,7 @@ def create_fixed_expense(
 
 
 @app.patch("/finances/fixed-expenses/{fixed_id}", response_model=FixedExpenseRead)
-def update_fixed_expense(
+async def update_fixed_expense(
     fixed_id: int,
     data: FixedExpenseUpdate,
     current_user: User = Depends(get_current_user),
@@ -903,7 +926,21 @@ def update_fixed_expense(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El monto no puede ser negativo",
             )
-        row.amount = round(data.amount, 2)
+        if data.amount_currency is not None:
+            curr = _normalize_amount_currency(data.amount_currency)
+        elif getattr(row, "original_currency", None):
+            curr = str(row.original_currency)
+        else:
+            curr = current_user.base_currency.upper()
+        base_amt, rate = await convert_original_to_base(
+            data.amount,
+            curr,
+            current_user.base_currency.upper(),
+        )
+        row.amount = base_amt
+        row.original_amount = round(data.amount, 2)
+        row.original_currency = curr
+        row.exchange_rate_used = rate
     if data.is_active is not None:
         row.is_active = data.is_active
 
@@ -1013,7 +1050,7 @@ def list_extra_income(
     response_model=ExtraIncomeRead,
     status_code=status.HTTP_201_CREATED,
 )
-def create_extra_income(
+async def create_extra_income(
     data: ExtraIncomeCreate,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
@@ -1030,12 +1067,21 @@ def create_extra_income(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El monto no puede ser negativo",
         )
+    curr = _normalize_amount_currency(data.amount_currency)
+    base_amt, rate = await convert_original_to_base(
+        data.amount,
+        curr,
+        current_user.base_currency.upper(),
+    )
     row = ExtraIncome(
         user_id=current_user.id,
         year=data.year,
         month=data.month,
         description=desc,
-        amount=round(data.amount, 2),
+        amount=base_amt,
+        original_amount=round(data.amount, 2),
+        original_currency=curr,
+        exchange_rate_used=rate,
     )
     session.add(row)
     session.commit()

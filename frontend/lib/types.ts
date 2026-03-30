@@ -95,7 +95,11 @@ export interface FixedExpense {
   id: number;
   user_id: string;
   name: string;
+  /** Monto en moneda base (presupuesto). */
   amount: number;
+  original_amount?: number | null;
+  original_currency?: string | null;
+  exchange_rate_used?: number | null;
   is_active: boolean;
   /** Día del mes (1–31) en que vence; null/undefined = sin día fijo */
   due_day?: number | null;
@@ -108,6 +112,8 @@ export interface FixedExpenseCreate {
   name: string;
   amount: number;
   due_day?: number | null;
+  /** USD/EUR: se convierte a moneda base con cotización al guardar. */
+  amount_currency?: "ARS" | "USD" | "EUR";
 }
 
 export interface ExtraIncome {
@@ -117,6 +123,9 @@ export interface ExtraIncome {
   month: number;
   description: string;
   amount: number;
+  original_amount?: number | null;
+  original_currency?: string | null;
+  exchange_rate_used?: number | null;
   created_at: string;
 }
 
@@ -125,6 +134,7 @@ export interface ExtraIncomeCreate {
   month: number;
   description: string;
   amount: number;
+  amount_currency?: "ARS" | "USD" | "EUR";
 }
 
 export interface ExpenseCreate {

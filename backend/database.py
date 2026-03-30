@@ -110,6 +110,48 @@ def _sqlite_patch_expense_credit_card_bank() -> None:
         return
 
 
+def _sqlite_patch_fixedexpense_fx_cols() -> None:
+    if "sqlite" not in DATABASE_URL:
+        return
+    from sqlalchemy import text
+
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("PRAGMA table_info(fixedexpense)"))
+            cols = {row[1] for row in r}
+            if not cols:
+                return
+            if "original_amount" not in cols:
+                conn.execute(text("ALTER TABLE fixedexpense ADD COLUMN original_amount REAL"))
+            if "original_currency" not in cols:
+                conn.execute(text("ALTER TABLE fixedexpense ADD COLUMN original_currency VARCHAR(8)"))
+            if "exchange_rate_used" not in cols:
+                conn.execute(text("ALTER TABLE fixedexpense ADD COLUMN exchange_rate_used REAL"))
+    except Exception:
+        return
+
+
+def _sqlite_patch_extraincome_fx_cols() -> None:
+    if "sqlite" not in DATABASE_URL:
+        return
+    from sqlalchemy import text
+
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("PRAGMA table_info(extraincome)"))
+            cols = {row[1] for row in r}
+            if not cols:
+                return
+            if "original_amount" not in cols:
+                conn.execute(text("ALTER TABLE extraincome ADD COLUMN original_amount REAL"))
+            if "original_currency" not in cols:
+                conn.execute(text("ALTER TABLE extraincome ADD COLUMN original_currency VARCHAR(8)"))
+            if "exchange_rate_used" not in cols:
+                conn.execute(text("ALTER TABLE extraincome ADD COLUMN exchange_rate_used REAL"))
+    except Exception:
+        return
+
+
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
     _sqlite_patch_monthlybudget_columns()
@@ -117,6 +159,8 @@ def create_db_and_tables() -> None:
     _sqlite_patch_expense_payment_method()
     _sqlite_patch_user_credit_card_banks()
     _sqlite_patch_expense_credit_card_bank()
+    _sqlite_patch_fixedexpense_fx_cols()
+    _sqlite_patch_extraincome_fx_cols()
 
 
 def get_session() -> Generator[Session, None, None]:

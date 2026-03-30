@@ -245,6 +245,7 @@ export async function updateFixedExpense(
   data: Partial<{
     name: string;
     amount: number;
+    amount_currency: "ARS" | "USD" | "EUR";
     is_active: boolean;
     due_day: number | null;
   }>

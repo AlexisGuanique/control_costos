@@ -104,6 +104,37 @@ function urgencyMessage(f: FixedExpense, periodYear: number, periodMonth: number
   return `Vence en ${left} días`;
 }
 
+function CurrencyToggle3({
+  value,
+  onChange,
+  compact,
+}: {
+  value: "USD" | "ARS" | "EUR";
+  onChange: (c: "USD" | "ARS" | "EUR") => void;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={`inline-flex rounded-lg bg-slate-900 p-0.5 ring-1 ring-slate-800 ${compact ? "scale-95" : ""}`}
+      role="group"
+      aria-label="Moneda del monto"
+    >
+      {(["USD", "ARS", "EUR"] as const).map((c) => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => onChange(c)}
+          className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
+            value === c ? "bg-slate-700 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          {c}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function FinanzasPage() {
   const { user } = useUser();
   const now = new Date();
@@ -131,12 +162,14 @@ export default function FinanzasPage() {
 
   const [fixedName, setFixedName] = useState("");
   const [fixedAmount, setFixedAmount] = useState("");
+  const [fixedCurrency, setFixedCurrency] = useState<"USD" | "ARS" | "EUR">("ARS");
   const [fixedDueDay, setFixedDueDay] = useState("");
   const [addingFixed, setAddingFixed] = useState(false);
 
   const [fixedEdit, setFixedEdit] = useState<FixedExpense | null>(null);
   const [editFixedName, setEditFixedName] = useState("");
   const [editFixedAmount, setEditFixedAmount] = useState("");
+  const [editFixedCurrency, setEditFixedCurrency] = useState<"USD" | "ARS" | "EUR">("ARS");
   const [editFixedDueDay, setEditFixedDueDay] = useState("");
   const [editFixedActive, setEditFixedActive] = useState(true);
   const [savingFixedEdit, setSavingFixedEdit] = useState(false);
@@ -145,6 +178,7 @@ export default function FinanzasPage() {
 
   const [extraDesc, setExtraDesc] = useState("");
   const [extraAmount, setExtraAmount] = useState("");
+  const [extraCurrency, setExtraCurrency] = useState<"USD" | "ARS" | "EUR">("USD");
   const [addingExtra, setAddingExtra] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<FinancesDeleteTarget>(null);
@@ -255,6 +289,35 @@ export default function FinanzasPage() {
       ? Math.round(salaryPreviewUsd * criptoVenta)
       : null;
 
+  const extraPreviewN = parseFloat(extraAmount.replace(",", "."));
+  const extraPreviewInBase =
+    extraCurrency === "USD" &&
+    baseCurrency === "ARS" &&
+    criptoVenta != null &&
+    Number.isFinite(extraPreviewN) &&
+    extraPreviewN >= 0
+      ? Math.round(extraPreviewN * criptoVenta)
+      : null;
+  const fixedPreviewN = parseFloat(fixedAmount.replace(",", "."));
+  const fixedPreviewInBase =
+    fixedCurrency === "USD" &&
+    baseCurrency === "ARS" &&
+    criptoVenta != null &&
+    Number.isFinite(fixedPreviewN) &&
+    fixedPreviewN >= 0
+      ? Math.round(fixedPreviewN * criptoVenta)
+      : null;
+
+  const editFixedPreviewN = parseFloat(editFixedAmount.replace(",", "."));
+  const editFixedPreviewInBase =
+    editFixedCurrency === "USD" &&
+    baseCurrency === "ARS" &&
+    criptoVenta != null &&
+    Number.isFinite(editFixedPreviewN) &&
+    editFixedPreviewN >= 0
+      ? Math.round(editFixedPreviewN * criptoVenta)
+      : null;
+
   async function handleAddFixed(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
@@ -282,11 +345,13 @@ export default function FinanzasPage() {
       await createFixedExpense({
         name,
         amount: amt,
+        amount_currency: fixedCurrency,
         ...(dueDay != null ? { due_day: dueDay } : {}),
       });
       setFixedName("");
       setFixedAmount("");
       setFixedDueDay("");
+      setFixedCurrency("ARS");
       await loadData();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Error al agregar gasto fijo");
@@ -325,6 +390,7 @@ export default function FinanzasPage() {
       await updateFixedExpense(fixedEdit.id, {
         name,
         amount: amt,
+        amount_currency: editFixedCurrency,
         due_day: dueDay,
         is_active: editFixedActive,
       });
@@ -357,6 +423,7 @@ export default function FinanzasPage() {
         month: periodMonth,
         description: desc,
         amount: amt,
+        amount_currency: extraCurrency,
       });
       setExtraDesc("");
       setExtraAmount("");
@@ -637,6 +704,10 @@ export default function FinanzasPage() {
                       className="w-full rounded-lg border-0 bg-slate-900/80 px-3 py-2.5 text-sm text-white ring-1 ring-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                     />
                   </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] font-medium text-slate-500">Moneda del monto</span>
+                    <CurrencyToggle3 value={extraCurrency} onChange={setExtraCurrency} compact />
+                  </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-nowrap sm:items-end">
                     <div className="min-w-0 flex-1">
                       <label htmlFor="extra-amt" className="sr-only">
@@ -646,11 +717,19 @@ export default function FinanzasPage() {
                         id="extra-amt"
                         type="text"
                         inputMode="decimal"
-                        placeholder="Monto"
+                        placeholder={extraCurrency === "USD" ? "Monto en USD" : "Monto"}
                         value={extraAmount}
                         onChange={(e) => setExtraAmount(e.target.value)}
                         className="w-full rounded-lg border-0 bg-slate-900/80 px-3 py-2.5 text-sm text-white ring-1 ring-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                       />
+                      {extraCurrency === "USD" && baseCurrency === "ARS" && criptoVenta != null && extraPreviewInBase != null && (
+                        <p className="mt-1 text-[10px] text-slate-500">
+                          ≈ {formatCurrency(extraPreviewInBase, baseCurrency)} en presupuesto (cripto venta)
+                        </p>
+                      )}
+                      {extraCurrency === "USD" && criptoVenta == null && (
+                        <p className="mt-1 text-[10px] text-amber-500/80">Sin cotización. Tocá Actualizar arriba.</p>
+                      )}
                     </div>
                     <button
                       type="submit"
@@ -665,13 +744,20 @@ export default function FinanzasPage() {
                 {extraList.length === 0 ? (
                   <p className="text-xs text-slate-300">Ninguno este mes.</p>
                 ) : (
-                  <ul className="divide-y divide-slate-800/90 text-sm max-h-40 overflow-y-auto">
+                  <ul className="divide-y divide-slate-800/90 text-sm sm:max-h-40 sm:overflow-y-auto">
                     {extraList.map((x) => (
                       <li key={x.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0">
                         <span className="truncate text-slate-300">{x.description}</span>
                         <div className="flex shrink-0 items-center gap-2">
-                          <span className="tabular-nums text-slate-300">
-                            +{formatCurrency(x.amount, baseCurrency)}
+                          <span className="text-right tabular-nums text-slate-300">
+                            <span className="block">+{formatCurrency(x.amount, baseCurrency)}</span>
+                            {x.original_currency &&
+                              x.original_amount != null &&
+                              x.original_currency !== baseCurrency && (
+                                <span className="block text-[10px] font-normal text-slate-500">
+                                  ({formatCurrency(x.original_amount, x.original_currency)})
+                                </span>
+                              )}
                           </span>
                           <button
                             type="button"
@@ -759,6 +845,10 @@ export default function FinanzasPage() {
                     className="w-full rounded-lg border-0 bg-slate-900/80 px-3 py-2.5 text-sm text-white ring-1 ring-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                   />
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-medium text-slate-500">Moneda del monto</span>
+                  <CurrencyToggle3 value={fixedCurrency} onChange={setFixedCurrency} compact />
+                </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-nowrap sm:items-end">
                   <div className="w-full shrink-0 sm:w-[7.25rem]">
                     <label htmlFor="fixed-amt" className="sr-only">
@@ -768,11 +858,19 @@ export default function FinanzasPage() {
                       id="fixed-amt"
                       type="text"
                       inputMode="decimal"
-                      placeholder="Monto"
+                      placeholder={fixedCurrency === "USD" ? "USD" : "Monto"}
                       value={fixedAmount}
                       onChange={(e) => setFixedAmount(e.target.value)}
                       className="w-full rounded-lg border-0 bg-slate-900/80 px-3 py-2.5 text-sm text-white ring-1 ring-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                     />
+                    {fixedCurrency === "USD" && baseCurrency === "ARS" && criptoVenta != null && fixedPreviewInBase != null && (
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        ≈ {formatCurrency(fixedPreviewInBase, baseCurrency)} en presupuesto
+                      </p>
+                    )}
+                    {fixedCurrency === "USD" && criptoVenta == null && (
+                      <p className="mt-1 text-[10px] text-amber-500/80">Sin cotización. Actualizá arriba.</p>
+                    )}
                   </div>
                   <div className="min-w-0 w-full flex-1 sm:min-w-[11rem] sm:max-w-[16rem]">
                     <label htmlFor="fixed-due" className="sr-only">
@@ -800,7 +898,7 @@ export default function FinanzasPage() {
               ) : displayedFixedExpenses.length === 0 ? (
                 <p className="text-xs text-slate-300">Ninguno coincide con este filtro.</p>
               ) : (
-                <ul className="max-h-52 divide-y divide-slate-800/90 overflow-y-auto text-sm">
+                <ul className="max-h-none divide-y divide-slate-800/90 text-sm sm:max-h-52 sm:overflow-y-auto">
                   {displayedFixedExpenses.map((f) => {
                     const urgency = fixedDueUrgency(f, periodYear, periodMonth);
                     const msg = urgency ? urgencyMessage(f, periodYear, periodMonth) : "";
@@ -892,18 +990,35 @@ export default function FinanzasPage() {
                         </div>
                       </div>
                       <span
-                        className={`shrink-0 tabular-nums ${
+                        className={`shrink-0 text-right tabular-nums ${
                           paidRow ? "text-emerald-200/90" : "text-slate-300"
                         }`}
                       >
-                        {formatCurrency(f.amount, baseCurrency)}
+                        <span className="block">{formatCurrency(f.amount, baseCurrency)}</span>
+                        {f.original_currency &&
+                          f.original_amount != null &&
+                          f.original_currency !== baseCurrency && (
+                            <span className="block text-[10px] font-normal text-slate-500">
+                              ({formatCurrency(f.original_amount, f.original_currency)})
+                            </span>
+                          )}
                       </span>
                       <button
                         type="button"
                         onClick={() => {
                           setFixedEdit(f);
                           setEditFixedName(f.name);
-                          setEditFixedAmount(String(f.amount));
+                          setEditFixedAmount(
+                            f.original_amount != null && f.original_currency
+                              ? String(f.original_amount)
+                              : String(f.amount)
+                          );
+                          setEditFixedCurrency(
+                            (f.original_currency as "USD" | "ARS" | "EUR" | null | undefined) ??
+                              (baseCurrency === "USD" || baseCurrency === "EUR" || baseCurrency === "ARS"
+                                ? baseCurrency
+                                : "ARS")
+                          );
                           setEditFixedDueDay(
                             f.due_day != null && f.due_day >= 1 ? String(f.due_day) : ""
                           );
@@ -1059,8 +1174,11 @@ export default function FinanzasPage() {
               </div>
               <div>
                 <label htmlFor="edit-fixed-amt" className="mb-1.5 block text-xs font-medium text-slate-300">
-                  Monto ({baseCurrency})
+                  Monto (se convierte a {baseCurrency})
                 </label>
+                <div className="mb-2">
+                  <CurrencyToggle3 value={editFixedCurrency} onChange={setEditFixedCurrency} compact />
+                </div>
                 <input
                   id="edit-fixed-amt"
                   type="text"
@@ -1070,6 +1188,11 @@ export default function FinanzasPage() {
                   className="w-full rounded-xl border border-slate-600 bg-slate-800/80 px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                   required
                 />
+                {editFixedCurrency === "USD" && baseCurrency === "ARS" && criptoVenta != null && editFixedPreviewInBase != null && (
+                  <p className="mt-1.5 text-[10px] text-slate-500">
+                    ≈ {formatCurrency(editFixedPreviewInBase, baseCurrency)} en presupuesto
+                  </p>
+                )}
               </div>
               <div>
                 <label htmlFor="edit-fixed-due" className="mb-1.5 block text-xs font-medium text-slate-300">

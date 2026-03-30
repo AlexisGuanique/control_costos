@@ -50,7 +50,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: P
           fixed inset-y-0 left-0 z-50
           lg:relative lg:inset-auto lg:z-auto lg:flex lg:shrink-0
 
-          flex flex-col h-[100dvh] max-h-[100dvh] min-h-0 lg:h-full
+          flex flex-col h-full min-h-0
           bg-[#1e293b] border-r border-slate-700/60
           transition-transform duration-300 ease-in-out
 

@@ -26,13 +26,25 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       });
   }, [router, setUser]);
 
+  /** Una sola columna de scroll: el <main>. Evita doble barra (body + main) en móvil. */
+  useEffect(() => {
+    const prevBody = document.body.style.overflow;
+    const prevHtml = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevBody;
+      document.documentElement.style.overflow = prevHtml;
+    };
+  }, []);
+
   function handleLogout() {
     localStorage.removeItem("fintrack_token");
     router.push("/");
   }
 
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 overflow-hidden bg-[#0f172a]">
+    <div className="fixed inset-0 z-[1] flex min-h-0 overflow-hidden bg-[#0f172a]">
       {/* Sidebar — fixed overlay on mobile, flex child on desktop */}
       <Sidebar
         user={user}

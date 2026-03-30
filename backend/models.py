@@ -184,7 +184,7 @@ class MonthlyBudget(SQLModel, table=True):
 
 
 class FixedExpense(SQLModel, table=True):
-    """Gastos fijos recurrentes (ej. alquiler), en moneda base."""
+    """Gastos fijos recurrentes; amount en moneda base del usuario."""
 
     __tablename__ = "fixedexpense"
 
@@ -192,6 +192,13 @@ class FixedExpense(SQLModel, table=True):
     user_id: str = Field(foreign_key="user.id", index=True)
     name: str
     amount: float
+    original_amount: Optional[float] = Field(
+        default=None, description="Monto ingresado antes de convertir a moneda base."
+    )
+    original_currency: Optional[str] = Field(default=None, max_length=8)
+    exchange_rate_used: Optional[float] = Field(
+        default=None, description="Tipo efectivo original → base al guardar."
+    )
     is_active: bool = Field(default=True)
     due_day: Optional[int] = Field(
         default=None,
@@ -221,7 +228,7 @@ class FixedExpensePeriodPayment(SQLModel, table=True):
 
 
 class ExtraIncome(SQLModel, table=True):
-    """Ingresos adicionales al sueldo, por mes calendario."""
+    """Ingresos adicionales al sueldo, por mes calendario; amount en moneda base."""
 
     __tablename__ = "extraincome"
 
@@ -231,6 +238,9 @@ class ExtraIncome(SQLModel, table=True):
     month: int
     description: str
     amount: float
+    original_amount: Optional[float] = Field(default=None)
+    original_currency: Optional[str] = Field(default=None, max_length=8)
+    exchange_rate_used: Optional[float] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -256,11 +266,13 @@ class FixedExpenseCreate(SQLModel):
     name: str
     amount: float
     due_day: Optional[int] = None
+    amount_currency: str = "ARS"
 
 
 class FixedExpenseUpdate(SQLModel):
     name: Optional[str] = None
     amount: Optional[float] = None
+    amount_currency: Optional[str] = None
     is_active: Optional[bool] = None
     due_day: Optional[int] = None
 
@@ -270,6 +282,9 @@ class FixedExpenseRead(SQLModel):
     user_id: str
     name: str
     amount: float
+    original_amount: Optional[float] = None
+    original_currency: Optional[str] = None
+    exchange_rate_used: Optional[float] = None
     is_active: bool
     due_day: Optional[int] = None
     created_at: datetime
@@ -287,6 +302,7 @@ class ExtraIncomeCreate(SQLModel):
     month: int
     description: str
     amount: float
+    amount_currency: str = "ARS"
 
 
 class ExtraIncomeRead(SQLModel):
@@ -296,6 +312,9 @@ class ExtraIncomeRead(SQLModel):
     month: int
     description: str
     amount: float
+    original_amount: Optional[float] = None
+    original_currency: Optional[str] = None
+    exchange_rate_used: Optional[float] = None
     created_at: datetime
 
 
