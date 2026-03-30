@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func
@@ -28,7 +30,9 @@ from exchange_service import (
 )
 from models import (
     AddMemberRequest,
+    AIChatTurn,
     AIExpenseRequest,
+    AIExpenseResult,
     BudgetSummary,
     CreditCardBankDetail,
     CreditCardBankMonthRow,
@@ -291,15 +295,207 @@ def _validate_expense_credit_card(
         if not normalized:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Indicá de qué banco es la tarjeta (configurá tus bancos en Configuraciones).",
+                detail=(
+                    "Indicá de qué banco es la tarjeta. "
+                    f"Bancos disponibles en tu cuenta: {', '.join(configured_names)}."
+                ),
             )
         if normalized not in configured_names:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Elegí un banco de tu lista: {', '.join(configured_names)}",
+                detail=(
+                    "Ese banco no está en tu lista. "
+                    f"Bancos disponibles: {', '.join(configured_names)}."
+                ),
             )
         return normalized
     return normalized
+
+
+def _payment_methods_for_ai() -> str:
+    """Texto exacto de cada enum para el prompt de IA."""
+    return "\n".join(f"- {pm.value}" for pm in PaymentMethod)
+
+
+def _payment_methods_invalid_detail() -> str:
+    opts = " | ".join(pm.value for pm in PaymentMethod)
+    return f"Medio de pago no reconocido. Opciones válidas: {opts}."
+
+
+def _parse_payment_method_from_ai_strict(raw: object) -> PaymentMethod:
+    if raw is None:
+        return PaymentMethod.OTRO
+    if not isinstance(raw, str):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_payment_methods_invalid_detail(),
+        )
+    s = raw.strip()
+    try:
+        return PaymentMethod(s)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_payment_methods_invalid_detail(),
+        )
+
+
+def _format_conversation_for_ai(turns: Optional[list[AIChatTurn]]) -> str:
+    if not turns:
+        return "(sin mensajes previos en esta conversación)"
+    lines: list[str] = []
+    for t in turns[-24:]:
+        role = (t.role or "").strip().lower()
+        label = "Usuario" if role == "user" else "Asistente"
+        c = (t.content or "").strip().replace("\n", " ")
+        if len(c) > 1200:
+            c = c[:1200] + "…"
+        if c:
+            lines.append(f"{label}: {c}")
+    return "\n".join(lines) if lines else "(sin mensajes previos en esta conversación)"
+
+
+def _http_exception_detail_as_str(exc: HTTPException) -> str:
+    d = exc.detail
+    if isinstance(d, str):
+        return d
+    if isinstance(d, list):
+        parts: list[str] = []
+        for item in d:
+            if isinstance(item, dict):
+                msg = item.get("msg")
+                parts.append(str(msg) if msg else str(item))
+            else:
+                parts.append(str(item))
+        return " ".join(parts) if parts else "No se pudo completar la acción."
+    return str(d) if d is not None else "No se pudo completar la acción."
+
+
+def _user_credit_banks_for_ai(current_user: User) -> str:
+    configured = _parse_credit_card_banks_from_stored(
+        getattr(current_user, "credit_card_banks", None) or []
+    )
+    if not configured:
+        return (
+            "(sin bancos de tarjeta cargados; el usuario debe agregarlos en Configuración "
+            "para poder registrar gastos con tarjeta de crédito con banco asociado)"
+        )
+    return "\n".join(f"- {e.name}" for e in configured)
+
+
+def _recent_expenses_for_ai(session: Session, user_id: str, limit: int = 50) -> str:
+    rows = session.exec(
+        select(Expense)
+        .where(Expense.user_id == user_id)
+        .order_by(Expense.created_at.desc())
+        .limit(limit)
+    ).all()
+    lines: list[str] = []
+    for e in rows:
+        bank = e.credit_card_bank or "—"
+        lines.append(
+            f"id={e.id} | {e.description} | {e.original_amount} {e.original_currency} | "
+            f"{e.category.value} | medio={e.payment_method.value} | "
+            f"banco={bank} | cuotas={e.credit_installments} | "
+            f"{e.created_at.strftime('%Y-%m-%d %H:%M')}"
+        )
+    return "\n".join(lines) if lines else "(sin gastos aún)"
+
+
+def _ai_patch_to_expense_update(patch: dict) -> ExpenseUpdate:
+    kwargs = {}
+    if "description" in patch and patch["description"] is not None:
+        kwargs["description"] = str(patch["description"]).strip()
+    if "original_amount" in patch and patch["original_amount"] is not None:
+        kwargs["original_amount"] = float(patch["original_amount"])
+    if "original_currency" in patch and patch["original_currency"] is not None:
+        kwargs["original_currency"] = str(patch["original_currency"]).upper().strip()
+    if "category" in patch and patch["category"] is not None:
+        raw = patch["category"]
+        try:
+            kwargs["category"] = ExpenseCategory(str(raw))
+        except ValueError:
+            kwargs["category"] = ExpenseCategory.OTRO
+    if "payment_method" in patch and patch["payment_method"] is not None:
+        kwargs["payment_method"] = _parse_payment_method_from_ai_strict(
+            patch["payment_method"]
+        )
+    if "credit_card_bank" in patch:
+        v = patch["credit_card_bank"]
+        if v is None:
+            kwargs["credit_card_bank"] = None
+        elif isinstance(v, str):
+            kwargs["credit_card_bank"] = v.strip() or None
+    if "credit_installments" in patch and patch["credit_installments"] is not None:
+        kwargs["credit_installments"] = max(1, min(60, int(patch["credit_installments"])))
+    if not kwargs:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No se indicó ningún cambio válido para el gasto.",
+        )
+    return ExpenseUpdate(**kwargs)
+
+
+async def _apply_expense_update(
+    session: Session,
+    expense: Expense,
+    update_data: ExpenseUpdate,
+    current_user: User,
+) -> Expense:
+    old_bank = expense.credit_card_bank
+    unset = update_data.model_dump(exclude_unset=True)
+
+    if update_data.description is not None:
+        expense.description = update_data.description.strip()
+
+    if update_data.category is not None:
+        expense.category = update_data.category
+
+    if update_data.payment_method is not None:
+        expense.payment_method = update_data.payment_method
+
+    amount_changed = update_data.original_amount is not None
+    currency_changed = update_data.original_currency is not None
+
+    if amount_changed or currency_changed:
+        new_amount = update_data.original_amount if amount_changed else expense.original_amount
+        new_currency = update_data.original_currency.upper() if currency_changed else expense.original_currency
+
+        base_amount, rate = await convert_original_to_base(
+            new_amount,
+            new_currency,
+            current_user.base_currency.upper(),
+        )
+
+        expense.original_amount = new_amount
+        expense.original_currency = new_currency
+        expense.exchange_rate_used = rate
+        expense.base_amount = base_amount
+
+    final_pm = expense.payment_method
+    if "credit_card_bank" in unset:
+        proposed_bank = unset["credit_card_bank"]
+    elif "payment_method" in unset:
+        proposed_bank = (
+            old_bank if final_pm == PaymentMethod.TARJETA_CREDITO else None
+        )
+    else:
+        proposed_bank = old_bank
+    expense.credit_card_bank = _validate_expense_credit_card(
+        current_user, final_pm, proposed_bank
+    )
+
+    if final_pm != PaymentMethod.TARJETA_CREDITO or not expense.credit_card_bank:
+        expense.credit_installments = 1
+    elif update_data.credit_installments is not None:
+        expense.credit_installments = max(
+            1, min(60, int(update_data.credit_installments))
+        )
+
+    session.add(expense)
+    session.commit()
+    session.refresh(expense)
+    return expense
 
 
 def _paid_fixed_expense_ids(
@@ -740,74 +936,153 @@ async def create_expense(
     return expense
 
 
-@app.post("/expenses/ai", response_model=ExpenseRead, status_code=status.HTTP_201_CREATED)
+@app.post("/expenses/ai", response_model=AIExpenseResult)
 async def create_expense_from_ai(
     request: AIExpenseRequest,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
-) -> Expense:
+) -> JSONResponse:
+    recent = _recent_expenses_for_ai(session, current_user.id)
+    pm_block = _payment_methods_for_ai()
+    banks_block = _user_credit_banks_for_ai(current_user)
+    conv_block = _format_conversation_for_ai(request.conversation_history)
     try:
-        extracted = await ai_service.extract_expense(request.message)
+        parsed = await ai_service.extract_expense_action(
+            request.message, recent, pm_block, banks_block, conv_block
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e),
+        ) from e
+
+    action = parsed["action"]
+    if action == "clarify":
+        msg = parsed.get("message") or "¿Podés dar más detalle?"
+        body = AIExpenseResult(action="assistant_message", message=msg)
+        return JSONResponse(
+            content=jsonable_encoder(body),
+            status_code=status.HTTP_200_OK,
         )
 
-    currency = extracted.get("original_currency", "ARS").upper()
-    amount = float(extracted.get("original_amount", 0))
-    base_amount, rate = await convert_original_to_base(
-        amount,
-        currency,
-        current_user.base_currency.upper(),
-    )
-
-    raw_category = extracted.get("category", "Otro")
-    try:
-        category = ExpenseCategory(raw_category)
-    except ValueError:
-        category = ExpenseCategory.OTRO
-
-    raw_pm = extracted.get("payment_method", "Otro")
-    if not isinstance(raw_pm, str):
-        raw_pm = "Otro"
-    try:
-        payment_method = PaymentMethod(raw_pm.strip())
-    except ValueError:
-        payment_method = PaymentMethod.OTRO
-
-    raw_bank = extracted.get("credit_card_bank")
-    bank_str: Optional[str] = None
-    if isinstance(raw_bank, str):
-        bank_str = raw_bank.strip() or None
-    cc_bank = _validate_expense_credit_card(current_user, payment_method, bank_str)
-
-    ai_inst = extracted.get("credit_installments")
-    if payment_method != PaymentMethod.TARJETA_CREDITO or not cc_bank:
-        credit_inst = 1
-    else:
+    if action == "edit":
+        eid = int(parsed["expense_id"])
+        expense = session.get(Expense, eid)
+        if not expense or expense.user_id != current_user.id:
+            body = AIExpenseResult(
+                action="assistant_message",
+                message="No encontré ese gasto o no te pertenece.",
+            )
+            return JSONResponse(
+                content=jsonable_encoder(body),
+                status_code=status.HTTP_200_OK,
+            )
+        patch = parsed["patch"]
         try:
-            credit_inst = max(1, min(60, int(ai_inst))) if ai_inst is not None else 1
-        except (TypeError, ValueError):
-            credit_inst = 1
+            update_data = _ai_patch_to_expense_update(patch)
+            updated = await _apply_expense_update(session, expense, update_data, current_user)
+        except HTTPException as exc:
+            msg = _http_exception_detail_as_str(exc)
+            body = AIExpenseResult(action="assistant_message", message=msg)
+            return JSONResponse(
+                content=jsonable_encoder(body),
+                status_code=status.HTTP_200_OK,
+            )
+        body = AIExpenseResult(action="updated", expense=updated)
+        return JSONResponse(
+            content=jsonable_encoder(body),
+            status_code=status.HTTP_200_OK,
+        )
 
-    expense = Expense(
-        user_id=current_user.id,
-        description=extracted.get("description", request.message[:100]),
-        category=category,
-        original_amount=amount,
-        original_currency=currency,
-        exchange_rate_used=rate,
-        base_amount=base_amount,
-        source=ExpenseSource.WEBCHAT,
-        payment_method=payment_method,
-        credit_card_bank=cc_bank,
-        credit_installments=credit_inst,
+    if action == "delete":
+        eid = int(parsed["expense_id"])
+        expense = session.get(Expense, eid)
+        if not expense or expense.user_id != current_user.id:
+            body = AIExpenseResult(
+                action="assistant_message",
+                message="No encontré ese gasto o no te pertenece.",
+            )
+            return JSONResponse(
+                content=jsonable_encoder(body),
+                status_code=status.HTTP_200_OK,
+            )
+        body = AIExpenseResult(action="pending_delete", expense=expense)
+        return JSONResponse(
+            content=jsonable_encoder(body),
+            status_code=status.HTTP_200_OK,
+        )
+
+    if action != "create":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Acción no reconocida.",
+        )
+
+    extracted = parsed["data"]
+    try:
+        currency = extracted.get("original_currency", "ARS").upper()
+        amount = float(extracted.get("original_amount", 0))
+        base_amount, rate = await convert_original_to_base(
+            amount,
+            currency,
+            current_user.base_currency.upper(),
+        )
+
+        raw_category = extracted.get("category", "Otro")
+        try:
+            category = ExpenseCategory(raw_category)
+        except ValueError:
+            category = ExpenseCategory.OTRO
+
+        raw_pm = extracted.get("payment_method", "Otro")
+        if not isinstance(raw_pm, str):
+            raw_pm = "Otro"
+        payment_method = _parse_payment_method_from_ai_strict(raw_pm)
+
+        raw_bank = extracted.get("credit_card_bank")
+        bank_str: Optional[str] = None
+        if isinstance(raw_bank, str):
+            bank_str = raw_bank.strip() or None
+        cc_bank = _validate_expense_credit_card(current_user, payment_method, bank_str)
+
+        ai_inst = extracted.get("credit_installments")
+        if payment_method != PaymentMethod.TARJETA_CREDITO or not cc_bank:
+            credit_inst = 1
+        else:
+            try:
+                credit_inst = max(1, min(60, int(ai_inst))) if ai_inst is not None else 1
+            except (TypeError, ValueError):
+                credit_inst = 1
+
+        expense = Expense(
+            user_id=current_user.id,
+            description=extracted.get("description", request.message[:100]),
+            category=category,
+            original_amount=amount,
+            original_currency=currency,
+            exchange_rate_used=rate,
+            base_amount=base_amount,
+            source=ExpenseSource.WEBCHAT,
+            payment_method=payment_method,
+            credit_card_bank=cc_bank,
+            credit_installments=credit_inst,
+        )
+        session.add(expense)
+        session.commit()
+        session.refresh(expense)
+    except HTTPException as exc:
+        msg = _http_exception_detail_as_str(exc)
+        body = AIExpenseResult(action="assistant_message", message=msg)
+        return JSONResponse(
+            content=jsonable_encoder(body),
+            status_code=status.HTTP_200_OK,
+        )
+
+    body = AIExpenseResult(action="created", expense=expense)
+    return JSONResponse(
+        content=jsonable_encoder(body),
+        status_code=status.HTTP_201_CREATED,
     )
-    session.add(expense)
-    session.commit()
-    session.refresh(expense)
-    return expense
 
 
 @app.get("/expenses/stats", response_model=ExpenseStats)
@@ -861,61 +1136,7 @@ async def update_expense(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Gasto no encontrado",
         )
-
-    old_bank = expense.credit_card_bank
-    unset = update_data.model_dump(exclude_unset=True)
-
-    if update_data.description is not None:
-        expense.description = update_data.description.strip()
-
-    if update_data.category is not None:
-        expense.category = update_data.category
-
-    if update_data.payment_method is not None:
-        expense.payment_method = update_data.payment_method
-
-    amount_changed = update_data.original_amount is not None
-    currency_changed = update_data.original_currency is not None
-
-    if amount_changed or currency_changed:
-        new_amount = update_data.original_amount if amount_changed else expense.original_amount
-        new_currency = update_data.original_currency.upper() if currency_changed else expense.original_currency
-
-        base_amount, rate = await convert_original_to_base(
-            new_amount,
-            new_currency,
-            current_user.base_currency.upper(),
-        )
-
-        expense.original_amount = new_amount
-        expense.original_currency = new_currency
-        expense.exchange_rate_used = rate
-        expense.base_amount = base_amount
-
-    final_pm = expense.payment_method
-    if "credit_card_bank" in unset:
-        proposed_bank = unset["credit_card_bank"]
-    elif "payment_method" in unset:
-        proposed_bank = (
-            old_bank if final_pm == PaymentMethod.TARJETA_CREDITO else None
-        )
-    else:
-        proposed_bank = old_bank
-    expense.credit_card_bank = _validate_expense_credit_card(
-        current_user, final_pm, proposed_bank
-    )
-
-    if final_pm != PaymentMethod.TARJETA_CREDITO or not expense.credit_card_bank:
-        expense.credit_installments = 1
-    elif update_data.credit_installments is not None:
-        expense.credit_installments = max(
-            1, min(60, int(update_data.credit_installments))
-        )
-
-    session.add(expense)
-    session.commit()
-    session.refresh(expense)
-    return expense
+    return await _apply_expense_update(session, expense, update_data, current_user)
 
 
 @app.delete("/expenses/{expense_id}", status_code=status.HTTP_204_NO_CONTENT)

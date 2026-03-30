@@ -1,4 +1,6 @@
 import type {
+  AIChatTurn,
+  AIExpenseResult,
   AuthToken,
   BudgetSummary,
   CreditCardBreakdown,
@@ -150,13 +152,20 @@ export async function createExpense(data: ExpenseCreate): Promise<Expense> {
   return handleResponse<Expense>(res);
 }
 
-export async function createExpenseFromAI(message: string): Promise<Expense> {
+export async function createExpenseFromAI(
+  message: string,
+  conversationHistory?: AIChatTurn[]
+): Promise<AIExpenseResult> {
+  const body: Record<string, unknown> = { message };
+  if (conversationHistory?.length) {
+    body.conversation_history = conversationHistory;
+  }
   const res = await fetch(`${API_URL}/expenses/ai`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(body),
   });
-  return handleResponse<Expense>(res);
+  return handleResponse<AIExpenseResult>(res);
 }
 
 export async function updateExpense(id: number, data: ExpenseUpdate): Promise<Expense> {

@@ -85,6 +85,19 @@ export interface Expense {
   created_at: string;
 }
 
+/** Turno de chat enviado al backend para mantener contexto en la IA. */
+export interface AIChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** Respuesta de POST /expenses/ai (alta, edición, mensaje informativo o borrado pendiente). */
+export interface AIExpenseResult {
+  action: "created" | "updated" | "pending_delete" | "assistant_message";
+  expense?: Expense;
+  message?: string;
+}
+
 export interface ExpenseStats {
   total_month_base: number;
   base_currency: string;

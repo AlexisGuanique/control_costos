@@ -1561,6 +1561,8 @@ export default function FinanzasPage() {
           if ("trip_id" in e) return;
           handleExpenseCreated(e);
         }}
+        onExpenseUpdated={(e) => handleExpenseUpdated(e)}
+        onExpenseDeleted={handleExpenseDeleted}
       />
     </div>
   );

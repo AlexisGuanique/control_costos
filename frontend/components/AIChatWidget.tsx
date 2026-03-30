@@ -2,20 +2,50 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, Sparkles, X } from "lucide-react";
-import { createExpenseFromAI, createTripExpenseFromAI } from "@/lib/api";
-import type { Expense, TripExpense } from "@/lib/types";
+import { createExpenseFromAI, createTripExpenseFromAI, deleteExpense } from "@/lib/api";
+import type { AIChatTurn, Expense, TripExpense } from "@/lib/types";
 
 interface Message {
   id: string;
   role: "user" | "assistant" | "error";
   content: string;
   expense?: Expense;
+  /** Solo gastos personales: si el asistente editó en lugar de crear. */
+  expenseAction?: "created" | "updated";
+  /** Gasto que se borrará si el usuario confirma (mismo hilo). */
+  pendingDeleteExpense?: Expense;
   tripExpense?: TripExpense;
+}
+
+function normalizeConfirmInput(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isNegativeDeleteReply(raw: string): boolean {
+  const t = normalizeConfirmInput(raw).replace(/[.!?…]/g, "");
+  if (!t) return false;
+  return /^(no|nop|nope|cancelar|cancela|cancel|mejor no|no gracias|dejá|deja)/.test(t);
+}
+
+function isAffirmativeDeleteReply(raw: string): boolean {
+  const t = normalizeConfirmInput(raw).replace(/[.!?…]/g, "");
+  if (!t) return false;
+  if (isNegativeDeleteReply(raw)) return false;
+  if (/^s[ií]$/.test(t)) return true;
+  return /^(s[ií]|si|ok|dale|confirmo|confirmar|de acuerdo|adelante|borrá|borra|eliminá|elimina|hacelo|listo|sip|ya|sipiri)(\s|$|[,.])/i.test(
+    t
+  );
 }
 
 const SUGGESTIONS_PERSONAL = [
   "Gasté 15 lucas en el supermercado",
   "Pagué Netflix por 10 dólares",
+  "Cambiá el último gasto a 20 lucas",
+  "Eliminá el gasto de Netflix",
   "Uber al trabajo, 2500 pesos",
   "Compré remedios, 8 lucas",
 ];
@@ -32,6 +62,10 @@ interface Props {
   tripId?: number;
   tripCurrency?: string;
   onExpenseCreated: (expense: Expense | TripExpense) => void;
+  /** Cuando el asistente modifica un gasto existente (solo variant personal). */
+  onExpenseUpdated?: (expense: Expense) => void;
+  /** Cuando se elimina un gasto (borrado confirmado en el chat o en la UI). */
+  onExpenseDeleted?: (id: number) => void;
 }
 
 export default function AIChatWidget({
@@ -39,6 +73,8 @@ export default function AIChatWidget({
   tripId,
   tripCurrency = "ARS",
   onExpenseCreated,
+  onExpenseUpdated,
+  onExpenseDeleted,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>(() => [
     {
@@ -47,17 +83,129 @@ export default function AIChatWidget({
       content:
         variant === "trip"
           ? `Podés cargar gastos del viaje en lenguaje natural. Decí quién pagó y el monto. Ejemplos: *"Pagué yo 50 lucas en pizza"* o *"Lo pagó María, 2000 pesos de taxi"*. Moneda del viaje: ${tripCurrency}.`
-          : "¡Hola! Soy tu asistente financiero. Podés decirme tus gastos en lenguaje natural y los registro automáticamente. Por ejemplo: *\"Gasté 15 lucas en el super\"* o *\"Pagué Netflix por 10 dólares\"*.",
+          : "¡Hola! Soy tu asistente financiero. Podés registrar gastos, corregirlos o pedir borrar uno (por ejemplo: *\"Eliminá Netflix\"* o *\"Borrá el último gasto\"*). Antes de borrar te confirmo en este mismo chat.",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  /** Mensaje del asistente que espera confirmación de borrado (botones o sí/no). */
+  const [pendingDelete, setPendingDelete] = useState<{
+    messageId: string;
+    expense: Expense;
+  } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  function messagesToConversationHistory(snapshot: Message[]): AIChatTurn[] {
+    return snapshot
+      .filter(
+        (m) =>
+          m.id !== "welcome" &&
+          (m.role === "user" || m.role === "assistant")
+      )
+      .map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      }));
+  }
+
+  async function processPersonalAI(content: string, historySnapshot: Message[]) {
+    const conversationHistory = messagesToConversationHistory(historySnapshot);
+    const result = await createExpenseFromAI(content, conversationHistory);
+
+    if (result.action === "assistant_message") {
+      setMessages([
+        ...historySnapshot,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: result.message ?? "",
+        },
+      ]);
+      return;
+    }
+
+    const { expense, action } = result;
+    if (!expense) return;
+
+    if (action === "pending_delete") {
+      const mid = (Date.now() + 1).toString();
+      setPendingDelete({ messageId: mid, expense });
+      const assistantMsg: Message = {
+        id: mid,
+        role: "assistant",
+        content:
+          "¿Seguro que querés eliminar este gasto? Respondé sí o no, o usá los botones de abajo.",
+        pendingDeleteExpense: expense,
+      };
+      setMessages([...historySnapshot, assistantMsg]);
+      return;
+    }
+
+    const assistantMsg: Message = {
+      id: (Date.now() + 1).toString(),
+      role: "assistant",
+      content:
+        action === "updated"
+          ? "✅ Gasto actualizado."
+          : "✅ Gasto registrado exitosamente.",
+      expense,
+      expenseAction: action,
+    };
+    setMessages([...historySnapshot, assistantMsg]);
+    if (action === "updated") {
+      onExpenseUpdated?.(expense);
+    } else {
+      onExpenseCreated(expense);
+    }
+  }
+
+  async function confirmDeleteInChat(expense: Expense) {
+    setLoading(true);
+    try {
+      await deleteExpense(expense.id);
+      onExpenseDeleted?.(expense.id);
+      setPendingDelete(null);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: "🗑️ Gasto eliminado.",
+        },
+      ]);
+    } catch (err: unknown) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "error",
+          content:
+            err instanceof Error
+              ? err.message
+              : "No pude eliminar el gasto. Intentá de nuevo.",
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function cancelDeleteInChat() {
+    setPendingDelete(null);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: "Listo, no borré ningún gasto.",
+      },
+    ]);
+  }
 
   async function sendMessage(text?: string) {
     const content = (text ?? input).trim();
@@ -68,7 +216,53 @@ export default function AIChatWidget({
       role: "user",
       content,
     };
-    setMessages((prev) => [...prev, userMsg]);
+    const snapshot = [...messages, userMsg];
+
+    if (variant === "personal" && pendingDelete) {
+      setMessages(snapshot);
+      setInput("");
+      setLoading(true);
+      try {
+        if (isNegativeDeleteReply(content)) {
+          cancelDeleteInChat();
+          return;
+        }
+        if (isAffirmativeDeleteReply(content)) {
+          const exp = pendingDelete.expense;
+          await deleteExpense(exp.id);
+          onExpenseDeleted?.(exp.id);
+          setPendingDelete(null);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: (Date.now() + 1).toString(),
+              role: "assistant",
+              content: "🗑️ Gasto eliminado.",
+            },
+          ]);
+          return;
+        }
+        setPendingDelete(null);
+        await processPersonalAI(content, snapshot);
+      } catch (err: unknown) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: (Date.now() + 1).toString(),
+            role: "assistant",
+            content:
+              err instanceof Error
+                ? err.message
+                : "No pude procesar el mensaje. Intentá de nuevo.",
+          },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    setMessages(snapshot);
     setInput("");
     setLoading(true);
 
@@ -87,22 +281,14 @@ export default function AIChatWidget({
         setMessages((prev) => [...prev, assistantMsg]);
         onExpenseCreated(tripExpense);
       } else {
-        const expense = await createExpenseFromAI(content);
-        const assistantMsg: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: `✅ Gasto registrado exitosamente.`,
-          expense,
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-        onExpenseCreated(expense);
+        await processPersonalAI(content, snapshot);
       }
     } catch (err: unknown) {
       setMessages((prev) => [
         ...prev,
         {
           id: (Date.now() + 1).toString(),
-          role: "error",
+          role: "assistant",
           content:
             err instanceof Error
               ? err.message
@@ -181,7 +367,15 @@ export default function AIChatWidget({
           {/* Messages */}
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 sm:max-h-80 sm:flex-none">
             {messages.map((msg) => (
-              <ChatBubble key={msg.id} message={msg} variant={variant} />
+              <ChatBubble
+                key={msg.id}
+                message={msg}
+                variant={variant}
+                pendingDelete={pendingDelete}
+                deleteLoading={loading}
+                onConfirmDelete={(exp) => void confirmDeleteInChat(exp)}
+                onCancelDelete={cancelDeleteInChat}
+              />
             ))}
             {loading && (
               <div className="flex items-center gap-2 text-slate-400 text-sm">
@@ -233,7 +427,9 @@ export default function AIChatWidget({
                 placeholder={
                   variant === "trip"
                     ? "Ej: Pagué yo 50 lucas en pizza..."
-                    : "Ej: Gasté 15 lucas en el super..."
+                    : pendingDelete
+                      ? "Sí / no, o usá los botones del mensaje…"
+                      : "Ej: Gasté 15 lucas en el super..."
                 }
                 disabled={loading}
                 className="flex-1 bg-slate-700 border border-slate-600 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
@@ -256,9 +452,17 @@ export default function AIChatWidget({
 function ChatBubble({
   message,
   variant,
+  pendingDelete,
+  deleteLoading,
+  onConfirmDelete,
+  onCancelDelete,
 }: {
   message: Message;
   variant: "personal" | "trip";
+  pendingDelete: { messageId: string; expense: Expense } | null;
+  deleteLoading: boolean;
+  onConfirmDelete: (expense: Expense) => void;
+  onCancelDelete: () => void;
 }) {
   const isUser = message.role === "user";
   const isError = message.role === "error";
@@ -288,6 +492,55 @@ function ChatBubble({
         }`}
       >
         <p className="leading-relaxed whitespace-pre-wrap">{message.content}</p>
+        {message.pendingDeleteExpense && variant === "personal" && (
+          <div className="mt-2 bg-amber-950/40 rounded-xl p-2.5 border border-amber-500/25 space-y-2">
+            <p className="text-xs text-amber-400/95 uppercase tracking-wider font-semibold">
+              Vas a eliminar
+            </p>
+            <p className="font-medium text-white">{message.pendingDeleteExpense.description}</p>
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs">
+              <span className="text-slate-400">
+                {message.pendingDeleteExpense.category}
+                <span className="text-slate-500">
+                  {" "}
+                  · {message.pendingDeleteExpense.payment_method}
+                  {message.pendingDeleteExpense.payment_method === "Tarjeta de crédito" &&
+                    message.pendingDeleteExpense.credit_card_bank &&
+                    ` (${message.pendingDeleteExpense.credit_card_bank})`}
+                </span>
+              </span>
+              <span className="text-amber-200/95 font-semibold">
+                {message.pendingDeleteExpense.original_currency !== "ARS"
+                  ? `${message.pendingDeleteExpense.original_amount} ${message.pendingDeleteExpense.original_currency} → `
+                  : ""}
+                {message.pendingDeleteExpense.base_amount.toLocaleString("es-AR", {
+                  style: "currency",
+                  currency: "ARS",
+                })}
+              </span>
+            </div>
+            {pendingDelete?.messageId === message.id && message.pendingDeleteExpense && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => onConfirmDelete(message.pendingDeleteExpense!)}
+                  disabled={deleteLoading}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition disabled:opacity-50"
+                >
+                  Confirmar eliminación
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancelDelete}
+                  disabled={deleteLoading}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 transition disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {message.tripExpense && variant === "trip" && (
           <div className="mt-2 bg-slate-800/60 rounded-xl p-2.5 border border-slate-600 space-y-1">
             <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
@@ -320,7 +573,7 @@ function ChatBubble({
         {message.expense && (
           <div className="mt-2 bg-slate-800/60 rounded-xl p-2.5 border border-slate-600 space-y-1">
             <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
-              Gasto registrado
+              {message.expenseAction === "updated" ? "Gasto actualizado" : "Gasto registrado"}
             </p>
             <p className="font-medium text-white">{message.expense.description}</p>
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs">

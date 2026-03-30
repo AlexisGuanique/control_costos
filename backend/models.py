@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional, List
+from typing import Any, List, Literal, Optional
 
 from sqlalchemy import Column, Enum as SAEnum, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel, Relationship
@@ -140,8 +140,24 @@ class ExpenseCreate(SQLModel):
     credit_installments: int = Field(default=1, ge=1, le=60)
 
 
+class AIChatTurn(SQLModel):
+    """Un turno del chat enviado al modelo para mantener contexto."""
+
+    role: str  # "user" | "assistant"
+    content: str
+
+
 class AIExpenseRequest(SQLModel):
     message: str
+    conversation_history: Optional[List[AIChatTurn]] = None
+
+
+class AIExpenseResult(SQLModel):
+    """Respuesta unificada del endpoint POST /expenses/ai (crear, editar, mensaje informativo o borrado pendiente)."""
+
+    action: Literal["created", "updated", "pending_delete", "assistant_message"]
+    expense: Optional["ExpenseRead"] = None
+    message: Optional[str] = None
 
 
 class ExpenseRead(SQLModel):

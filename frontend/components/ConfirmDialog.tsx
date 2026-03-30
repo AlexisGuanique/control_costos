@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 
 interface Props {
@@ -25,6 +26,26 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
 }: Props) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || loading) return;
+      const el = e.target as HTMLElement | null;
+      if (
+        el?.closest("button") ||
+        el?.closest("input") ||
+        el?.closest("textarea") ||
+        el?.closest("select")
+      ) {
+        return;
+      }
+      e.preventDefault();
+      onConfirm();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, loading, onConfirm]);
+
   if (!open) return null;
 
   const confirmBtn =
