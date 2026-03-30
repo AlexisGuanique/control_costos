@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { PlusCircle, Save } from "lucide-react";
 import { createExpense, previewExpenseInBase, updateExpense } from "@/lib/api";
 import { useUser } from "@/lib/UserContext";
-import type {
-  Expense,
-  ExpenseBasePreview,
-  ExpenseCategory,
-  ExpenseUpdate,
-  PaymentMethod,
+import {
+  normalizeCreditCardBanks,
+  type Expense,
+  type ExpenseBasePreview,
+  type ExpenseCategory,
+  type ExpenseUpdate,
+  type PaymentMethod,
 } from "@/lib/types";
 
 function formatMoney(amount: number, currency: string) {
@@ -70,13 +71,14 @@ export default function ExpenseForm({
   const [category, setCategory] = useState<ExpenseCategory>("Otro");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("Otro");
   const [creditCardBank, setCreditCardBank] = useState("");
+  const [creditInstallments, setCreditInstallments] = useState("1");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [basePreview, setBasePreview] = useState<ExpenseBasePreview | null>(null);
   const [basePreviewLoading, setBasePreviewLoading] = useState(false);
 
   const baseCurrency = (user?.base_currency ?? "ARS").toUpperCase();
-  const creditBanks = user?.credit_card_banks ?? [];
+  const creditBanks = normalizeCreditCardBanks(user?.credit_card_banks ?? []);
 
   useEffect(() => {
     if (expenseToEdit) {
@@ -86,6 +88,9 @@ export default function ExpenseForm({
       setCategory(expenseToEdit.category);
       setPaymentMethod(expenseToEdit.payment_method ?? "Otro");
       setCreditCardBank(expenseToEdit.credit_card_bank ?? "");
+      setCreditInstallments(
+        String(expenseToEdit.credit_installments ?? 1)
+      );
     } else {
       setDescription("");
       setAmount("");
@@ -93,6 +98,7 @@ export default function ExpenseForm({
       setCategory("Otro");
       setPaymentMethod("Otro");
       setCreditCardBank("");
+      setCreditInstallments("1");
     }
     setError("");
   }, [expenseToEdit]);
@@ -100,6 +106,7 @@ export default function ExpenseForm({
   useEffect(() => {
     if (paymentMethod !== "Tarjeta de crédito") {
       setCreditCardBank("");
+      setCreditInstallments("1");
     }
   }, [paymentMethod]);
 
@@ -163,6 +170,10 @@ export default function ExpenseForm({
           const trimmed = creditCardBank.trim();
           const prev = (expenseToEdit.credit_card_bank ?? "").trim();
           if (trimmed !== prev) patch.credit_card_bank = trimmed || null;
+          const n = Math.min(60, Math.max(1, parseInt(creditInstallments, 10) || 1));
+          if (n !== (expenseToEdit.credit_installments ?? 1)) {
+            patch.credit_installments = n;
+          }
         }
 
         if (Object.keys(patch).length === 0) {
@@ -174,6 +185,10 @@ export default function ExpenseForm({
         const updated = await updateExpense(expenseToEdit.id, patch);
         onSuccess(updated);
       } else {
+        const inst = Math.min(
+          60,
+          Math.max(1, parseInt(creditInstallments, 10) || 1)
+        );
         const expense = await createExpense({
           description: description.trim(),
           category,
@@ -181,7 +196,10 @@ export default function ExpenseForm({
           original_currency: currency,
           payment_method: paymentMethod,
           ...(paymentMethod === "Tarjeta de crédito"
-            ? { credit_card_bank: creditCardBank.trim() || null }
+            ? {
+                credit_card_bank: creditCardBank.trim() || null,
+                credit_installments: inst,
+              }
             : {}),
         });
         onSuccess(expense);
@@ -190,6 +208,7 @@ export default function ExpenseForm({
         setCategory("Otro");
         setPaymentMethod("Otro");
         setCreditCardBank("");
+        setCreditInstallments("1");
       }
     } catch (err: unknown) {
       setError(
@@ -330,8 +349,8 @@ export default function ExpenseForm({
               >
                 <option value="">Elegí un banco</option>
                 {creditBanks.map((b) => (
-                  <option key={b} value={b}>
-                    {b}
+                  <option key={b.name} value={b.name}>
+                    {b.name}
                   </option>
                 ))}
               </select>
@@ -349,6 +368,22 @@ export default function ExpenseForm({
                 </p>
               </>
             )}
+            <div className="mt-3">
+              <label className="mb-1.5 block text-xs font-medium text-slate-400">
+                Cuotas
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={60}
+                value={creditInstallments}
+                onChange={(e) => setCreditInstallments(e.target.value)}
+                className="w-full max-w-[8rem] rounded-xl border border-slate-600 bg-slate-700 px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-[10px] text-slate-500">
+                El total se reparte en la moneda base: cada mes cuenta una cuota desde el mes del gasto.
+              </p>
+            </div>
           </div>
         )}
       </div>

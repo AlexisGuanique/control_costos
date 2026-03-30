@@ -1,17 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Pencil, Plus, Receipt, RefreshCw, Trash2, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import {
+  AlertCircle,
+  CreditCard,
+  Pencil,
+  Plus,
+  Receipt,
+  RefreshCw,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   listExpenses,
   getStats,
   getBudgetSummary,
+  getCreditCardBreakdown,
   upsertMonthlyBudget,
   getUsdCriptoVenta,
   listFixedExpenses,
   createFixedExpense,
   updateFixedExpense,
   setFixedExpensePaidPeriod,
+  setCreditCardPeriodPaid,
   deleteFixedExpense,
   listExtraIncome,
   createExtraIncome,
@@ -20,11 +32,18 @@ import {
 import { useUser } from "@/lib/UserContext";
 import type {
   BudgetSummary,
+  CreditCardBankMonthRow,
+  CreditCardBreakdown,
   Expense,
   ExpenseStats,
   ExtraIncome,
   FixedExpense,
 } from "@/lib/types";
+import {
+  daysUntilCcDue,
+  formatCcDueSubtitle,
+  formatUrgencyFromDaysLeft,
+} from "@/lib/creditCardDue";
 import ExpenseTable from "@/components/ExpenseTable";
 import ExpenseCard from "@/components/ExpenseCard";
 import ExpenseModal from "@/components/ExpenseModal";
@@ -36,6 +55,10 @@ type FinancesDeleteTarget =
   | null
   | { kind: "fixed"; item: FixedExpense }
   | { kind: "extra"; item: ExtraIncome };
+
+type FixedSectionRow =
+  | { kind: "fixed"; item: FixedExpense }
+  | { kind: "cc"; row: CreditCardBankMonthRow };
 
 function formatCurrency(amount: number, currency = "ARS") {
   return new Intl.NumberFormat("es-AR", {
@@ -95,13 +118,31 @@ function fixedDueUrgency(
   return null;
 }
 
-function urgencyMessage(f: FixedExpense, periodYear: number, periodMonth: number): string {
-  const left = daysUntilFixedDue(f.due_day, periodYear, periodMonth);
+function urgencyMessageForDueDay(
+  dueDay: number | null | undefined,
+  periodYear: number,
+  periodMonth: number
+): string {
+  const left = daysUntilFixedDue(dueDay, periodYear, periodMonth);
   if (left == null) return "";
-  if (left < 0) return `Vencido hace ${Math.abs(left)} ${Math.abs(left) === 1 ? "día" : "días"}`;
-  if (left === 0) return "Vence hoy";
-  if (left === 1) return "Vence mañana";
-  return `Vence en ${left} días`;
+  return formatUrgencyFromDaysLeft(left);
+}
+
+function urgencyMessage(f: FixedExpense, periodYear: number, periodMonth: number): string {
+  return urgencyMessageForDueDay(f.due_day, periodYear, periodMonth);
+}
+
+function ccDueUrgency(
+  row: CreditCardBankMonthRow,
+  periodYear: number,
+  periodMonth: number
+): FixedDueUrgency {
+  if (row.paid ?? false) return null;
+  const left = daysUntilCcDue(row, periodYear, periodMonth);
+  if (left == null) return null;
+  if (left < 0) return "overdue";
+  if (left <= 5) return "soon";
+  return null;
 }
 
 function CurrencyToggle3({
@@ -185,17 +226,44 @@ export default function FinanzasPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [expenseModal, setExpenseModal] = useState<null | "new" | Expense>(null);
 
+  const [ccModalOpen, setCcModalOpen] = useState(false);
+  const [ccDetail, setCcDetail] = useState<CreditCardBreakdown | null>(null);
+  const [ccLoading, setCcLoading] = useState(false);
+  const [ccPortalMounted, setCcPortalMounted] = useState(false);
+
+  useEffect(() => {
+    setCcPortalMounted(true);
+  }, []);
+
   const baseCurrency = user?.base_currency ?? "ARS";
+
+  async function openCreditCardModal() {
+    setCcModalOpen(true);
+    setCcDetail(null);
+    setCcLoading(true);
+    try {
+      const d = await getCreditCardBreakdown(periodYear, periodMonth);
+      setCcDetail(d);
+    } catch {
+      setCcDetail(null);
+    } finally {
+      setCcLoading(false);
+    }
+  }
 
   const fixedTotals = useMemo(() => {
     const active = fixedList.filter((f) => f.is_active);
     const paid = active.filter((f) => f.paid_this_period);
     const unpaid = active.filter((f) => !f.paid_this_period);
-    return {
-      totalPaid: paid.reduce((s, f) => s + f.amount, 0),
-      totalUnpaid: unpaid.reduce((s, f) => s + f.amount, 0),
-    };
-  }, [fixedList]);
+    let totalPaid = paid.reduce((s, f) => s + f.amount, 0);
+    let totalUnpaid = unpaid.reduce((s, f) => s + f.amount, 0);
+    const cc = summary?.credit_card_monthly_by_bank ?? [];
+    for (const row of cc) {
+      if (row.paid ?? false) totalPaid += row.amount;
+      else totalUnpaid += row.amount;
+    }
+    return { totalPaid, totalUnpaid };
+  }, [fixedList, summary]);
 
   /** Filtro solo visual: los totales de arriba usan siempre todos los fijos del mes. */
   const displayedFixedExpenses = useMemo(() => {
@@ -205,6 +273,29 @@ export default function FinanzasPage() {
       (f) => fixedDueUrgency(f, periodYear, periodMonth) === "overdue"
     );
   }, [fixedList, fixedListFilter, periodYear, periodMonth]);
+
+  /** Fijos + cuotas tarjeta del mes, ordenados por nombre. */
+  const displayedFixedSectionRows = useMemo((): FixedSectionRow[] => {
+    const cc = summary?.credit_card_monthly_by_bank ?? [];
+    let ccVisible: CreditCardBankMonthRow[] = [];
+    if (fixedListFilter === "all") ccVisible = cc;
+    else if (fixedListFilter === "paid") ccVisible = cc.filter((r) => r.paid ?? false);
+    else if (fixedListFilter === "overdue")
+      ccVisible = cc.filter(
+        (r) =>
+          !(r.paid ?? false) && ccDueUrgency(r, periodYear, periodMonth) === "overdue"
+      );
+    const rows: FixedSectionRow[] = [
+      ...displayedFixedExpenses.map((item) => ({ kind: "fixed" as const, item })),
+      ...ccVisible.map((row) => ({ kind: "cc" as const, row })),
+    ];
+    rows.sort((a, b) => {
+      const na = a.kind === "fixed" ? a.item.name : a.row.label;
+      const nb = b.kind === "fixed" ? b.item.name : b.row.label;
+      return na.localeCompare(nb, "es", { sensitivity: "base" });
+    });
+    return rows;
+  }, [displayedFixedExpenses, summary, fixedListFilter, periodYear, periodMonth]);
 
   const loadData = useCallback(async () => {
     try {
@@ -777,16 +868,28 @@ export default function FinanzasPage() {
 
             {/* Gastos fijos */}
             <div className="space-y-3 lg:border-l lg:border-slate-800/80 lg:pl-10">
-              <h3 className="text-xs font-medium uppercase tracking-wide text-slate-300">
-                Gastos fijos <span className="font-normal normal-case text-slate-300">· cada mes</span>
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-xs font-medium uppercase tracking-wide text-slate-300">
+                  Gastos fijos{" "}
+                  <span className="font-normal normal-case text-slate-300">· cada mes</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={openCreditCardModal}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/80 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 transition hover:bg-slate-700 hover:text-white"
+                >
+                  <CreditCard className="h-3.5 w-3.5" />
+                  Tarjetas (cuotas)
+                </button>
+              </div>
               <p className="text-[11px] leading-snug text-slate-300">
                 Solo los que marques como <strong className="text-slate-300">pagados</strong> en{" "}
                 {monthLabel(periodYear, periodMonth)} restan del resumen arriba. Podés pausar un fijo desde
                 editar.
               </p>
 
-              {fixedList.some((f) => f.is_active) && (
+              {(fixedList.some((f) => f.is_active) ||
+                (summary?.credit_card_monthly_by_bank?.length ?? 0) > 0) && (
                 <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-800/80 bg-slate-900/40 p-3">
                   <div>
                     <p className="text-[10px] font-medium uppercase tracking-wide text-amber-500/90">
@@ -893,13 +996,115 @@ export default function FinanzasPage() {
                   </button>
                 </div>
               </form>
-              {fixedList.length === 0 ? (
+
+              {fixedList.length === 0 &&
+              (summary?.credit_card_monthly_by_bank?.length ?? 0) === 0 ? (
                 <p className="text-xs text-slate-300">Ninguno cargado.</p>
-              ) : displayedFixedExpenses.length === 0 ? (
+              ) : displayedFixedSectionRows.length === 0 ? (
                 <p className="text-xs text-slate-300">Ninguno coincide con este filtro.</p>
               ) : (
                 <ul className="max-h-none divide-y divide-slate-800/90 text-sm sm:max-h-52 sm:overflow-y-auto">
-                  {displayedFixedExpenses.map((f) => {
+                  {displayedFixedSectionRows.map((entry) => {
+                    if (entry.kind === "cc") {
+                      const row = entry.row;
+                      const paidRow = row.paid ?? false;
+                      const urgency = ccDueUrgency(row, periodYear, periodMonth);
+                      const leftCc = daysUntilCcDue(row, periodYear, periodMonth);
+                      const ccMsg =
+                        urgency && leftCc != null ? formatUrgencyFromDaysLeft(leftCc) : "";
+                      const soonRow = urgency === "soon" && !paidRow;
+                      const overdueRow = urgency === "overdue" && !paidRow;
+                      return (
+                        <li
+                          key={`cc-${row.bank}`}
+                          className={`flex flex-wrap items-center gap-2 py-2.5 pl-1 first:pt-0 sm:gap-3 ${
+                            paidRow
+                              ? "rounded-lg bg-emerald-500/[0.06] ring-1 ring-emerald-500/15"
+                              : ""
+                          } ${
+                            soonRow
+                              ? "rounded-lg bg-amber-500/[0.07] ring-1 ring-amber-500/30"
+                              : ""
+                          } ${
+                            overdueRow
+                              ? "rounded-lg bg-red-500/[0.06] ring-1 ring-red-500/30"
+                              : ""
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={row.paid}
+                            title="Pagado este mes"
+                            onChange={async (e) => {
+                              try {
+                                await setCreditCardPeriodPaid({
+                                  year: periodYear,
+                                  month: periodMonth,
+                                  bank: row.bank,
+                                  paid: e.target.checked,
+                                });
+                                await loadData();
+                              } catch {
+                                /* ignore */
+                              }
+                            }}
+                            className="h-4 w-4 shrink-0 rounded border-slate-600 accent-emerald-500 focus:ring-emerald-500/40"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-start gap-1.5">
+                              {soonRow && (
+                                <AlertCircle
+                                  className="mt-0.5 h-4 w-4 shrink-0 text-amber-400"
+                                  aria-hidden
+                                />
+                              )}
+                              {overdueRow && (
+                                <AlertCircle
+                                  className="mt-0.5 h-4 w-4 shrink-0 text-red-400"
+                                  aria-hidden
+                                />
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <div
+                                  className={`truncate font-medium ${
+                                    paidRow ? "text-emerald-100/95" : "text-slate-200"
+                                  }`}
+                                >
+                                  {row.label}
+                                </div>
+                                <p className="text-[11px] text-slate-400">{formatCcDueSubtitle(row)}</p>
+                                {soonRow && ccMsg && (
+                                  <p className="mt-0.5 text-[11px] font-medium text-amber-400">
+                                    {ccMsg}
+                                  </p>
+                                )}
+                                {overdueRow && ccMsg && (
+                                  <p className="mt-0.5 text-[11px] font-medium text-red-400">
+                                    {ccMsg}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <span
+                            className={`shrink-0 text-right tabular-nums ${
+                              paidRow ? "text-emerald-200/90" : "text-slate-300"
+                            }`}
+                          >
+                            {formatCurrency(row.amount, baseCurrency)}
+                          </span>
+                          <span className="inline-flex shrink-0 gap-0" aria-hidden>
+                            <span className="p-1.5 opacity-0">
+                              <Pencil className="h-4 w-4" />
+                            </span>
+                            <span className="p-1.5 opacity-0">
+                              <Trash2 className="h-4 w-4" />
+                            </span>
+                          </span>
+                        </li>
+                      );
+                    }
+                    const f = entry.item;
                     const urgency = fixedDueUrgency(f, periodYear, periodMonth);
                     const msg = urgency ? urgencyMessage(f, periodYear, periodMonth) : "";
                     const paidRow = f.is_active && f.paid_this_period;
@@ -1236,6 +1441,97 @@ export default function FinanzasPage() {
           </div>
         </div>
       )}
+
+      {ccModalOpen &&
+        ccPortalMounted &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[200] flex min-h-0 items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]"
+            role="presentation"
+          >
+            <button
+              type="button"
+              className="absolute inset-0 min-h-[100dvh] w-full cursor-default bg-slate-950/75 backdrop-blur-md"
+              aria-label="Cerrar"
+              onClick={() => setCcModalOpen(false)}
+            />
+            <div
+              className="relative z-10 flex h-[min(560px,88dvh)] min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-600/70 bg-[#1e293b]/95 shadow-2xl shadow-black/50 ring-1 ring-slate-700/40"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cc-modal-title"
+            >
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-700/60 bg-slate-900/40 px-4 py-3.5 sm:px-5">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 ring-1 ring-violet-500/25">
+                    <CreditCard className="h-5 w-5 text-violet-300" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 id="cc-modal-title" className="text-base font-semibold text-white">
+                      Tarjetas de crédito
+                    </h2>
+                    <p className="text-[11px] text-slate-400">
+                      {monthLabel(periodYear, periodMonth)} · cuotas con vencimiento este mes
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCcModalOpen(false)}
+                  className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-700/80 hover:text-white"
+                  aria-label="Cerrar"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5 sm:py-5 [-webkit-overflow-scrolling:touch]">
+                {ccLoading ? (
+                  <p className="text-sm text-slate-400">Cargando…</p>
+                ) : !ccDetail || ccDetail.banks.length === 0 ? (
+                  <p className="text-sm leading-relaxed text-slate-400">
+                    No hay cuotas de tarjeta registradas para este mes (o todas son en 1 pago).
+                  </p>
+                ) : (
+                  <div className="space-y-5">
+                    {ccDetail.banks.map((b) => (
+                      <div key={b.bank} className="space-y-2.5">
+                        <div className="flex items-center justify-between gap-2 px-0.5">
+                          <h3 className="text-sm font-semibold tracking-tight text-slate-100">
+                            {b.bank}
+                          </h3>
+                          <span className="text-sm font-semibold tabular-nums text-emerald-300/95">
+                            {formatCurrency(b.total_due_this_month, ccDetail.base_currency)}
+                          </span>
+                        </div>
+                        <ul className="space-y-2">
+                          {b.purchases.map((p) => (
+                            <li
+                              key={`${p.expense_id}-${p.current_installment_index}`}
+                              className="rounded-xl bg-slate-800/50 p-3 ring-1 ring-slate-700/50 transition hover:ring-slate-600/60"
+                            >
+                              <p className="font-medium text-slate-100">{p.description}</p>
+                              <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
+                                Cuota {p.current_installment_index} de {p.installments} ·{" "}
+                                {formatCurrency(p.installment_amount, ccDetail.base_currency)} este mes ·{" "}
+                                {p.installments_remaining_after} restantes después
+                              </p>
+                              <p className="mt-1.5 text-[11px] text-slate-500">
+                                Total compra:{" "}
+                                {formatCurrency(p.total_base, ccDetail.base_currency)} ·{" "}
+                                {new Date(p.purchase_date).toLocaleDateString("es-AR")}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
       <ConfirmDialog
         open={deleteTarget !== null}

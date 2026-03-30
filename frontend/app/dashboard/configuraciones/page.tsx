@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { updateMe } from "@/lib/api";
 import { useUser } from "@/lib/UserContext";
+import { normalizeCreditCardBanks, type CreditCardBankEntry } from "@/lib/types";
+import NthBusinessDaySelect from "@/components/NthBusinessDaySelect";
 
 type ToastType = "success" | "error";
 interface Toast { type: ToastType; message: string }
@@ -34,9 +36,12 @@ export default function ConfiguracionesPage() {
   const [savingPw, setSavingPw]     = useState(false);
 
   const [bankInput, setBankInput] = useState("");
+  const [bankDueMode, setBankDueMode] = useState<"calendar" | "business">("business");
+  const [bankCalendarDay, setBankCalendarDay] = useState("");
+  const [bankBusinessNth, setBankBusinessNth] = useState("10");
   const [savingBanks, setSavingBanks] = useState(false);
 
-  const creditBanks = user?.credit_card_banks ?? [];
+  const creditBanks = normalizeCreditCardBanks(user?.credit_card_banks ?? []);
 
   useEffect(() => {
     if (user) {
@@ -83,15 +88,40 @@ export default function ConfiguracionesPage() {
     e.preventDefault();
     const name = bankInput.trim();
     if (!name) return;
-    if (creditBanks.some((b) => b.toLowerCase() === name.toLowerCase())) {
+    if (creditBanks.some((b) => b.name.toLowerCase() === name.toLowerCase())) {
       showToast("error", "Ese banco ya está en la lista.");
       return;
     }
+    const due_mode = bankDueMode;
+    let due_day: number | null = null;
+    let business_nth: number | null = null;
+    if (due_mode === "calendar") {
+      const raw = bankCalendarDay.trim();
+      if (raw) {
+        const d = parseInt(raw, 10);
+        if (Number.isNaN(d) || d < 1 || d > 31) {
+          showToast("error", "Día del mes: entre 1 y 31.");
+          return;
+        }
+        due_day = d;
+      }
+    } else {
+      const n = parseInt(bankBusinessNth, 10);
+      if (Number.isNaN(n) || n < 1 || n > 23) {
+        showToast("error", "Elegí un día hábil entre 1 y 23.");
+        return;
+      }
+      business_nth = n;
+    }
+    const newEntry: CreditCardBankEntry = { name, due_mode, due_day, business_nth };
     setSavingBanks(true);
     try {
-      const updated = await updateMe({ credit_card_banks: [...creditBanks, name] });
+      const updated = await updateMe({ credit_card_banks: [...creditBanks, newEntry] });
       setUser(updated);
       setBankInput("");
+      setBankCalendarDay("");
+      setBankBusinessNth("10");
+      setBankDueMode("business");
       showToast("success", "Banco agregado.");
     } catch (err: unknown) {
       showToast("error", err instanceof Error ? err.message : "Error al guardar");
@@ -100,11 +130,11 @@ export default function ConfiguracionesPage() {
     }
   }
 
-  async function handleRemoveBank(bank: string) {
+  async function handleRemoveBank(bankName: string) {
     setSavingBanks(true);
     try {
       const updated = await updateMe({
-        credit_card_banks: creditBanks.filter((b) => b !== bank),
+        credit_card_banks: creditBanks.filter((b) => b.name !== bankName),
       });
       setUser(updated);
       showToast("success", "Banco quitado de la lista.");
@@ -238,44 +268,99 @@ export default function ConfiguracionesPage() {
       <Section
         icon={<CreditCard className="w-5 h-5 text-amber-400" />}
         title="Bancos con tarjeta de crédito"
-        description="Agregá en qué bancos tenés tarjeta; al registrar un gasto con medio «Tarjeta de crédito» podrás elegir el banco"
+        description="Definí el vencimiento del resumen: día hábil (típico) o día fijo del mes. En Finanzas te avisamos como con los gastos fijos (lun–vie; sin feriados)."
       >
         <p className="text-xs text-slate-500 leading-relaxed">
           Si no cargás ninguno, podés escribir el banco a mano al cargar el gasto. Si cargás bancos acá, el gasto te pedirá elegir uno de la lista.
         </p>
-        <form onSubmit={handleAddBank} className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div className="flex-1 min-w-0">
-            <label className="block text-xs font-medium text-slate-400 mb-1.5">
-              Nombre del banco
-            </label>
-            <input
-              type="text"
-              value={bankInput}
-              onChange={(e) => setBankInput(e.target.value)}
-              placeholder="Ej: Galicia, Santander…"
-              className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-3 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition"
-            />
+        <form onSubmit={handleAddBank} className="space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_minmax(0,11rem)_auto] sm:items-end">
+            <div className="min-w-0">
+              <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="cc-bank-name">
+                Nombre del banco
+              </label>
+              <input
+                id="cc-bank-name"
+                type="text"
+                value={bankInput}
+                onChange={(e) => setBankInput(e.target.value)}
+                placeholder="Ej: Galicia, Santander…"
+                className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition"
+              />
+            </div>
+            <div className="min-w-0">
+              <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="cc-due-mode">
+                Tipo de vencimiento
+              </label>
+              <select
+                id="cc-due-mode"
+                value={bankDueMode}
+                onChange={(e) => setBankDueMode(e.target.value as "calendar" | "business")}
+                className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+              >
+                <option value="business">N-ésimo día hábil (lun–vie)</option>
+                <option value="calendar">Día fijo del calendario (1–31)</option>
+              </select>
+            </div>
+            <div className="min-w-0">
+              <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="cc-due-value">
+                {bankDueMode === "business" ? "Qué día hábil" : "Día del mes"}
+              </label>
+              {bankDueMode === "business" ? (
+                <NthBusinessDaySelect
+                  id="cc-due-value"
+                  value={bankBusinessNth}
+                  onChange={setBankBusinessNth}
+                />
+              ) : (
+                <input
+                  id="cc-due-value"
+                  type="number"
+                  min={1}
+                  max={31}
+                  inputMode="numeric"
+                  value={bankCalendarDay}
+                  onChange={(e) => setBankCalendarDay(e.target.value)}
+                  placeholder="Opcional"
+                  className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                />
+              )}
+            </div>
+            <div className="flex sm:justify-end sm:pb-0">
+              <SaveButton loading={savingBanks} label="Agregar banco" />
+            </div>
           </div>
-          <SaveButton loading={savingBanks} label="Agregar banco" />
+          <p className="text-[10px] text-slate-500 leading-snug">
+            Día hábil: solo lunes a viernes (no cuenta sábados ni domingos ni feriados). Si tu banco usa otro criterio, elegí “Día fijo del calendario”.
+          </p>
         </form>
         {creditBanks.length === 0 ? (
           <p className="text-sm text-slate-500">Todavía no agregaste ningún banco.</p>
         ) : (
-          <ul className="flex flex-wrap gap-2">
+          <ul className="flex flex-col items-start gap-2 sm:flex-row sm:flex-wrap">
             {creditBanks.map((b) => (
               <li
-                key={b}
-                className="inline-flex items-center gap-1.5 pl-3 pr-1 py-1.5 rounded-xl bg-slate-700/50 border border-slate-600 text-sm text-slate-200"
+                key={b.name}
+                className="flex w-max max-w-full min-h-0 items-start gap-2 rounded-lg border border-slate-600/90 bg-slate-700/40 px-3 py-2 text-sm text-slate-200 sm:max-w-md"
               >
-                {b}
+                <div className="min-w-0 leading-snug">
+                  <p className="font-medium text-white">{b.name}</p>
+                  <p className="mt-0.5 text-[11px] leading-snug text-slate-400">
+                    {b.due_mode === "business" && b.business_nth != null
+                      ? `Resumen: ${b.business_nth}º día hábil`
+                      : b.due_day != null
+                        ? `Resumen el día ${b.due_day} del mes`
+                        : "Sin fecha de resumen"}
+                  </p>
+                </div>
                 <button
                   type="button"
                   disabled={savingBanks}
-                  onClick={() => handleRemoveBank(b)}
-                  className="p-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-600/80 transition disabled:opacity-50"
-                  aria-label={`Quitar ${b}`}
+                  onClick={() => handleRemoveBank(b.name)}
+                  className="-mr-1 -mt-0.5 shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-600/80 hover:text-red-400 disabled:opacity-50"
+                  aria-label={`Quitar ${b.name}`}
                 >
-                  <X className="w-4 h-4" />
+                  <X className="h-4 w-4" />
                 </button>
               </li>
             ))}
@@ -347,7 +432,7 @@ function SaveButton({ loading, label }: { loading: boolean; label: string }) {
     <button
       type="submit"
       disabled={loading}
-      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition-all"
+      className="inline-flex h-11 min-h-[2.75rem] items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold text-sm px-5 rounded-xl transition-all w-full sm:w-auto"
     >
       {loading ? (
         <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Guardando...</>

@@ -88,6 +88,10 @@ export default function ExpenseCard({ expense, baseCurrency, onDeleted, onEdit }
           {expense.payment_method === "Tarjeta de crédito" && expense.credit_card_bank
             ? ` · ${expense.credit_card_bank}`
             : ""}
+          {expense.payment_method === "Tarjeta de crédito" &&
+          (expense.credit_installments ?? 1) > 1
+            ? ` · ${expense.credit_installments ?? 1} cuotas`
+            : ""}
         </span>
       </div>
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Optional, List
+from typing import Any, Optional, List
 
 from sqlalchemy import Column, Enum as SAEnum, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel, Relationship
@@ -34,6 +34,20 @@ class PaymentMethod(str, Enum):
     OTRO = "Otro"
 
 
+class CreditCardBankEntry(SQLModel):
+    """Banco con tarjeta y regla de vencimiento del resumen."""
+
+    name: str = Field(max_length=64)
+    due_mode: str = Field(default="calendar", description='"calendar" o "business"')
+    due_day: Optional[int] = Field(default=None, ge=1, le=31)
+    business_nth: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=23,
+        description="N-ésimo día hábil (lun–vie) del mes.",
+    )
+
+
 class User(SQLModel, table=True):
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
@@ -43,10 +57,10 @@ class User(SQLModel, table=True):
     password_hash: str
     full_name: str
     base_currency: str = Field(default="ARS")
-    credit_card_banks: List[str] = Field(
+    credit_card_banks: List[Any] = Field(
         default_factory=list,
         sa_column=Column(JSON),
-        description="Bancos donde el usuario tiene tarjeta de crédito (para asociar gastos).",
+        description="Lista de {name, due_day?}; admite legado [str, ...].",
     )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -79,6 +93,12 @@ class Expense(SQLModel, table=True):
         max_length=128,
         description="Banco de la tarjeta (solo si el medio es Tarjeta de crédito).",
     )
+    credit_installments: int = Field(
+        default=1,
+        ge=1,
+        le=60,
+        description="Cantidad de cuotas (solo tarjeta de crédito; 1 = un pago).",
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     user: Optional[User] = Relationship(back_populates="expenses")
@@ -98,7 +118,7 @@ class UserRead(SQLModel):
     email: str
     full_name: str
     base_currency: str
-    credit_card_banks: List[str] = Field(default_factory=list)
+    credit_card_banks: List[CreditCardBankEntry] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -117,6 +137,7 @@ class ExpenseCreate(SQLModel):
     original_currency: str = "ARS"
     payment_method: PaymentMethod = PaymentMethod.OTRO
     credit_card_bank: Optional[str] = None
+    credit_installments: int = Field(default=1, ge=1, le=60)
 
 
 class AIExpenseRequest(SQLModel):
@@ -135,6 +156,7 @@ class ExpenseRead(SQLModel):
     source: ExpenseSource
     payment_method: PaymentMethod
     credit_card_bank: Optional[str] = None
+    credit_installments: int = 1
     created_at: datetime
 
 
@@ -148,7 +170,7 @@ class ExpenseStats(SQLModel):
 class UserUpdate(SQLModel):
     full_name: Optional[str] = None
     base_currency: Optional[str] = None
-    credit_card_banks: Optional[List[str]] = None
+    credit_card_banks: Optional[List[CreditCardBankEntry]] = None
     current_password: Optional[str] = None
     new_password: Optional[str] = None
 
@@ -160,6 +182,7 @@ class ExpenseUpdate(SQLModel):
     original_currency: Optional[str] = None
     payment_method: Optional[PaymentMethod] = None
     credit_card_bank: Optional[str] = None
+    credit_installments: Optional[int] = Field(default=None, ge=1, le=60)
 
 
 # ─── Presupuesto personal (sueldo, fijos, ingresos extra) ─────────────────────
@@ -225,6 +248,22 @@ class FixedExpensePeriodPayment(SQLModel, table=True):
     year: int
     month: int
     paid_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CreditCardPeriodPaid(SQLModel, table=True):
+    """Marca el pago de cuotas de tarjeta (por banco) en un mes, como un fijo."""
+
+    __tablename__ = "creditcardperiodpaid"
+    __table_args__ = (
+        UniqueConstraint("user_id", "year", "month", "bank", name="uq_cc_period_bank"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(foreign_key="user.id", index=True)
+    year: int
+    month: int
+    bank: str = Field(max_length=128)
+    paid: bool = Field(default=False)
 
 
 class ExtraIncome(SQLModel, table=True):
@@ -318,6 +357,50 @@ class ExtraIncomeRead(SQLModel):
     created_at: datetime
 
 
+class CreditCardBankMonthRow(SQLModel):
+    """Cuota mensual por banco (para mostrar como “Pago Tarjeta …”)."""
+
+    bank: str
+    amount: float
+    label: str
+    paid: bool = False
+    due_mode: Optional[str] = None
+    due_day: Optional[int] = None
+    business_nth: Optional[int] = None
+
+
+class CreditCardPeriodPaidBody(SQLModel):
+    year: int
+    month: int
+    bank: str = Field(min_length=1, max_length=128)
+    paid: bool
+
+
+class CreditCardPurchaseLine(SQLModel):
+    expense_id: int
+    description: str
+    bank: str
+    total_base: float
+    installments: int
+    installment_amount: float
+    current_installment_index: int
+    installments_remaining_after: int
+    purchase_date: datetime
+
+
+class CreditCardBankDetail(SQLModel):
+    bank: str
+    total_due_this_month: float
+    purchases: List[CreditCardPurchaseLine] = Field(default_factory=list)
+
+
+class CreditCardBreakdown(SQLModel):
+    year: int
+    month: int
+    base_currency: str
+    banks: List[CreditCardBankDetail] = Field(default_factory=list)
+
+
 class BudgetSummary(SQLModel):
     year: int
     month: int
@@ -331,6 +414,7 @@ class BudgetSummary(SQLModel):
     total_income: float
     total_outflows: float
     remaining: float
+    credit_card_monthly_by_bank: List[CreditCardBankMonthRow] = Field(default_factory=list)
 
 
 # ─── Trip models ──────────────────────────────────────────────────────────────

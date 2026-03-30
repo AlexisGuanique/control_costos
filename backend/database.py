@@ -131,6 +131,25 @@ def _sqlite_patch_fixedexpense_fx_cols() -> None:
         return
 
 
+def _sqlite_patch_expense_credit_installments() -> None:
+    if "sqlite" not in DATABASE_URL:
+        return
+    from sqlalchemy import text
+
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("PRAGMA table_info(expense)"))
+            cols = {row[1] for row in r}
+            if not cols:
+                return
+            if "credit_installments" not in cols:
+                conn.execute(
+                    text("ALTER TABLE expense ADD COLUMN credit_installments INTEGER NOT NULL DEFAULT 1")
+                )
+    except Exception:
+        return
+
+
 def _sqlite_patch_extraincome_fx_cols() -> None:
     if "sqlite" not in DATABASE_URL:
         return
@@ -161,6 +180,7 @@ def create_db_and_tables() -> None:
     _sqlite_patch_expense_credit_card_bank()
     _sqlite_patch_fixedexpense_fx_cols()
     _sqlite_patch_extraincome_fx_cols()
+    _sqlite_patch_expense_credit_installments()
 
 
 def get_session() -> Generator[Session, None, None]:

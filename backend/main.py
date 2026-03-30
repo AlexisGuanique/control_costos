@@ -30,6 +30,12 @@ from models import (
     AddMemberRequest,
     AIExpenseRequest,
     BudgetSummary,
+    CreditCardBankDetail,
+    CreditCardBankMonthRow,
+    CreditCardBreakdown,
+    CreditCardPeriodPaid,
+    CreditCardPeriodPaidBody,
+    CreditCardPurchaseLine,
     Expense,
     ExpenseCategory,
     ExpenseCreate,
@@ -69,6 +75,7 @@ from models import (
     TripUpdate,
     User,
     UserCreate,
+    CreditCardBankEntry,
     UserRead,
     UserSearchResult,
     UserUpdate,
@@ -112,23 +119,140 @@ def _validate_due_day(value: Optional[int]) -> None:
         )
 
 
-def _normalize_credit_card_banks(banks: Optional[List[str]]) -> List[str]:
-    if not banks:
+def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntry]:
+    """Normaliza JSON: legado list[str], list[{name, due_day}], o con due_mode/business_nth."""
+    if not raw:
+        return []
+    if not isinstance(raw, list):
         return []
     seen: set[str] = set()
-    out: List[str] = []
-    for b in banks:
-        s = (b or "").strip()
-        if not s or len(s) > 64:
-            continue
-        key = s.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(s)
+    out: List[CreditCardBankEntry] = []
+    for item in raw:
+        if isinstance(item, str):
+            name = item.strip()
+            if not name or len(name) > 64:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                CreditCardBankEntry(
+                    name=name,
+                    due_mode="calendar",
+                    due_day=None,
+                    business_nth=None,
+                )
+            )
+        elif isinstance(item, dict):
+            name = (item.get("name") or "").strip()
+            if not name or len(name) > 64:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            mode_raw = str(item.get("due_mode") or "calendar").strip().lower()
+            if mode_raw not in ("calendar", "business"):
+                mode_raw = "calendar"
+            dd = item.get("due_day")
+            due: Optional[int] = None
+            if dd is not None:
+                try:
+                    di = int(dd)
+                    if 1 <= di <= 31:
+                        due = di
+                except (TypeError, ValueError):
+                    pass
+            bn_raw = item.get("business_nth")
+            business_nth: Optional[int] = None
+            if bn_raw is not None:
+                try:
+                    bi = int(bn_raw)
+                    if 1 <= bi <= 23:
+                        business_nth = bi
+                except (TypeError, ValueError):
+                    pass
+            if mode_raw == "business" and business_nth is not None:
+                out.append(
+                    CreditCardBankEntry(
+                        name=name,
+                        due_mode="business",
+                        due_day=None,
+                        business_nth=business_nth,
+                    )
+                )
+            else:
+                out.append(
+                    CreditCardBankEntry(
+                        name=name,
+                        due_mode="calendar",
+                        due_day=due,
+                        business_nth=None,
+                    )
+                )
         if len(out) >= 40:
             break
     return out
+
+
+def _normalize_credit_card_banks_for_storage(
+    entries: Optional[List[CreditCardBankEntry]],
+) -> List[dict]:
+    """Lista de dicts para guardar en JSON (sin duplicados por nombre)."""
+    if not entries:
+        return []
+    seen: set[str] = set()
+    out: List[dict] = []
+    for e in entries:
+        name = (e.name or "").strip()
+        if not name or len(name) > 64:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        mode = str(e.due_mode or "calendar").strip().lower()
+        if mode not in ("calendar", "business"):
+            mode = "calendar"
+        if mode == "business":
+            bn = e.business_nth
+            if bn is not None and (bn < 1 or bn > 23):
+                bn = None
+            out.append(
+                {
+                    "name": name,
+                    "due_mode": "business",
+                    "due_day": None,
+                    "business_nth": bn,
+                }
+            )
+        else:
+            due = e.due_day
+            if due is not None and (due < 1 or due > 31):
+                due = None
+            out.append(
+                {
+                    "name": name,
+                    "due_mode": "calendar",
+                    "due_day": due,
+                    "business_nth": None,
+                }
+            )
+        if len(out) >= 40:
+            break
+    return out
+
+
+def user_to_read(user: User) -> UserRead:
+    return UserRead(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        base_currency=user.base_currency,
+        credit_card_banks=_parse_credit_card_banks_from_stored(user.credit_card_banks),
+        created_at=user.created_at,
+    )
 
 
 def _normalize_credit_card_bank_value(bank: Optional[str]) -> Optional[str]:
@@ -159,19 +283,20 @@ def _validate_expense_credit_card(
                 detail="El banco solo aplica cuando el medio de pago es Tarjeta de crédito",
             )
         return None
-    configured = _normalize_credit_card_banks(
+    configured = _parse_credit_card_banks_from_stored(
         getattr(current_user, "credit_card_banks", None) or []
     )
-    if configured:
+    configured_names = [e.name for e in configured]
+    if configured_names:
         if not normalized:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Indicá de qué banco es la tarjeta (configurá tus bancos en Configuraciones).",
             )
-        if normalized not in configured:
+        if normalized not in configured_names:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Elegí un banco de tu lista: {', '.join(configured)}",
+                detail=f"Elegí un banco de tu lista: {', '.join(configured_names)}",
             )
         return normalized
     return normalized
@@ -248,6 +373,161 @@ def _month_bounds_utc(year: int, month: int) -> Tuple[datetime, datetime]:
     return start, end
 
 
+def _add_months(year: int, month: int, delta: int) -> Tuple[int, int]:
+    idx = year * 12 + (month - 1) + delta
+    return idx // 12, idx % 12 + 1
+
+
+def variable_portion_for_month(e: Expense, year: int, month: int) -> float:
+    """
+    Monto que cuenta en el mes para presupuesto: compras no tarjeta o 1 cuota en el mes de compra;
+    tarjeta en N cuotas reparte base_amount/N en cada mes del plan (desde el mes de alta).
+    """
+    if e.payment_method != PaymentMethod.TARJETA_CREDITO:
+        cy, cm = e.created_at.year, e.created_at.month
+        if (cy, cm) == (year, month):
+            return round(e.base_amount, 2)
+        return 0.0
+    bank_ok = bool((e.credit_card_bank or "").strip())
+    n = max(1, int(e.credit_installments or 1))
+    if not bank_ok or n <= 1:
+        cy, cm = e.created_at.year, e.created_at.month
+        if (cy, cm) == (year, month):
+            return round(e.base_amount, 2)
+        return 0.0
+    per = e.base_amount / n
+    sy, sm = e.created_at.year, e.created_at.month
+    for i in range(n):
+        y_m, m_m = _add_months(sy, sm, i)
+        if (y_m, m_m) == (year, month):
+            return round(per, 2)
+    return 0.0
+
+
+def _credit_card_paid_map(
+    session: Session, user_id: str, year: int, month: int
+) -> dict[str, bool]:
+    rows = session.exec(
+        select(CreditCardPeriodPaid).where(
+            CreditCardPeriodPaid.user_id == user_id,
+            CreditCardPeriodPaid.year == year,
+            CreditCardPeriodPaid.month == month,
+        )
+    ).all()
+    return {r.bank: r.paid for r in rows}
+
+
+def _credit_card_month_rows_for_period(
+    session: Session, user_id: str, year: int, month: int, user: User
+) -> List[CreditCardBankMonthRow]:
+    expenses = session.exec(select(Expense).where(Expense.user_id == user_id)).all()
+    by_bank: dict[str, float] = {}
+    for e in expenses:
+        if e.payment_method != PaymentMethod.TARJETA_CREDITO:
+            continue
+        bank = (e.credit_card_bank or "").strip()
+        if not bank:
+            continue
+        n = max(1, int(e.credit_installments or 1))
+        if n <= 1:
+            continue
+        portion = variable_portion_for_month(e, year, month)
+        if portion <= 0:
+            continue
+        by_bank[bank] = round(by_bank.get(bank, 0.0) + portion, 2)
+    paid_map = _credit_card_paid_map(session, user_id, year, month)
+    cfg_by_name = {
+        e.name: e for e in _parse_credit_card_banks_from_stored(user.credit_card_banks)
+    }
+    rows: List[CreditCardBankMonthRow] = []
+    for b, a in sorted(by_bank.items(), key=lambda x: x[0].lower()):
+        cfg = cfg_by_name.get(b)
+        if cfg and cfg.due_mode == "business" and cfg.business_nth is not None:
+            rows.append(
+                CreditCardBankMonthRow(
+                    bank=b,
+                    amount=a,
+                    label=f"Pago Tarjeta {b}",
+                    paid=paid_map.get(b, False),
+                    due_mode="business",
+                    due_day=None,
+                    business_nth=cfg.business_nth,
+                )
+            )
+        elif cfg and cfg.due_mode == "calendar" and cfg.due_day is not None:
+            rows.append(
+                CreditCardBankMonthRow(
+                    bank=b,
+                    amount=a,
+                    label=f"Pago Tarjeta {b}",
+                    paid=paid_map.get(b, False),
+                    due_mode="calendar",
+                    due_day=cfg.due_day,
+                    business_nth=None,
+                )
+            )
+        else:
+            rows.append(
+                CreditCardBankMonthRow(
+                    bank=b,
+                    amount=a,
+                    label=f"Pago Tarjeta {b}",
+                    paid=paid_map.get(b, False),
+                    due_mode=None,
+                    due_day=None,
+                    business_nth=None,
+                )
+            )
+    return rows
+
+
+def _credit_card_breakdown(
+    session: Session, user_id: str, year: int, month: int, base_currency: str
+) -> CreditCardBreakdown:
+    expenses = session.exec(select(Expense).where(Expense.user_id == user_id)).all()
+    by_bank: dict[str, List[CreditCardPurchaseLine]] = {}
+    for e in expenses:
+        if e.payment_method != PaymentMethod.TARJETA_CREDITO:
+            continue
+        bank = (e.credit_card_bank or "").strip()
+        if not bank:
+            continue
+        n = max(1, int(e.credit_installments or 1))
+        if n <= 1:
+            continue
+        sy, sm = e.created_at.year, e.created_at.month
+        for i in range(n):
+            y_m, m_m = _add_months(sy, sm, i)
+            if (y_m, m_m) != (year, month):
+                continue
+            per = round(e.base_amount / n, 2)
+            idx = i + 1
+            remaining = n - idx
+            line = CreditCardPurchaseLine(
+                expense_id=e.id,
+                description=e.description,
+                bank=bank,
+                total_base=round(e.base_amount, 2),
+                installments=n,
+                installment_amount=per,
+                current_installment_index=idx,
+                installments_remaining_after=remaining,
+                purchase_date=e.created_at,
+            )
+            by_bank.setdefault(bank, []).append(line)
+
+    banks_out: List[CreditCardBankDetail] = []
+    for bank in sorted(by_bank.keys(), key=lambda x: x.lower()):
+        lines = sorted(by_bank[bank], key=lambda L: L.purchase_date, reverse=True)
+        total = round(sum(L.installment_amount for L in lines), 2)
+        banks_out.append(
+            CreditCardBankDetail(bank=bank, total_due_this_month=total, purchases=lines)
+        )
+    return CreditCardBreakdown(
+        year=year, month=month, base_currency=base_currency, banks=banks_out
+    )
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     create_db_and_tables()
@@ -256,7 +536,7 @@ def on_startup() -> None:
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 
 @app.post("/auth/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def register(user_data: UserCreate, session: Session = Depends(get_session)) -> User:
+def register(user_data: UserCreate, session: Session = Depends(get_session)) -> UserRead:
     existing = session.exec(select(User).where(User.email == user_data.email)).first()
     if existing:
         raise HTTPException(
@@ -273,7 +553,7 @@ def register(user_data: UserCreate, session: Session = Depends(get_session)) -> 
     session.add(user)
     session.commit()
     session.refresh(user)
-    return user
+    return user_to_read(user)
 
 
 @app.post("/auth/token")
@@ -293,8 +573,8 @@ def login(
 
 
 @app.get("/auth/me", response_model=UserRead)
-def get_me(current_user: User = Depends(get_current_user)) -> User:
-    return current_user
+def get_me(current_user: User = Depends(get_current_user)) -> UserRead:
+    return user_to_read(current_user)
 
 
 @app.patch("/auth/me", response_model=UserRead)
@@ -302,7 +582,7 @@ def update_me(
     update_data: UserUpdate,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
-) -> User:
+) -> UserRead:
     if update_data.full_name is not None:
         current_user.full_name = update_data.full_name.strip()
 
@@ -316,7 +596,7 @@ def update_me(
         current_user.base_currency = update_data.base_currency.upper()
 
     if update_data.credit_card_banks is not None:
-        current_user.credit_card_banks = _normalize_credit_card_banks(
+        current_user.credit_card_banks = _normalize_credit_card_banks_for_storage(
             update_data.credit_card_banks
         )
 
@@ -337,7 +617,7 @@ def update_me(
     session.add(current_user)
     session.commit()
     session.refresh(current_user)
-    return current_user
+    return user_to_read(current_user)
 
 
 @app.get("/users/search", response_model=List[UserSearchResult])
@@ -436,6 +716,10 @@ async def create_expense(
         expense_data.payment_method,
         expense_data.credit_card_bank,
     )
+    if expense_data.payment_method != PaymentMethod.TARJETA_CREDITO or not cc_bank:
+        credit_inst = 1
+    else:
+        credit_inst = max(1, min(60, int(expense_data.credit_installments)))
 
     expense = Expense(
         user_id=current_user.id,
@@ -448,6 +732,7 @@ async def create_expense(
         source=ExpenseSource.MANUAL,
         payment_method=expense_data.payment_method,
         credit_card_bank=cc_bank,
+        credit_installments=credit_inst,
     )
     session.add(expense)
     session.commit()
@@ -497,6 +782,15 @@ async def create_expense_from_ai(
         bank_str = raw_bank.strip() or None
     cc_bank = _validate_expense_credit_card(current_user, payment_method, bank_str)
 
+    ai_inst = extracted.get("credit_installments")
+    if payment_method != PaymentMethod.TARJETA_CREDITO or not cc_bank:
+        credit_inst = 1
+    else:
+        try:
+            credit_inst = max(1, min(60, int(ai_inst))) if ai_inst is not None else 1
+        except (TypeError, ValueError):
+            credit_inst = 1
+
     expense = Expense(
         user_id=current_user.id,
         description=extracted.get("description", request.message[:100]),
@@ -508,6 +802,7 @@ async def create_expense_from_ai(
         source=ExpenseSource.WEBCHAT,
         payment_method=payment_method,
         credit_card_bank=cc_bank,
+        credit_installments=credit_inst,
     )
     session.add(expense)
     session.commit()
@@ -522,36 +817,34 @@ def get_stats(
     year: Optional[int] = None,
     month: Optional[int] = None,
 ) -> ExpenseStats:
-    if year is not None and month is not None:
-        _validate_year_month(year, month)
-        start_of_month, end_of_month = _month_bounds_utc(year, month)
-    else:
+    if year is None or month is None:
         now = datetime.utcnow()
-        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        if now.month == 12:
-            end_of_month = datetime(now.year + 1, 1, 1, 0, 0, 0, 0)
-        else:
-            end_of_month = datetime(now.year, now.month + 1, 1, 0, 0, 0, 0)
+        y, m = now.year, now.month
+    else:
+        _validate_year_month(year, month)
+        y, m = year, month
 
-    expenses = session.exec(
-        select(Expense).where(
-            Expense.user_id == current_user.id,
-            Expense.created_at >= start_of_month,
-            Expense.created_at < end_of_month,
-        )
+    all_user_expenses = session.exec(
+        select(Expense).where(Expense.user_id == current_user.id)
     ).all()
-
-    total_month = round(sum(e.base_amount for e in expenses), 2)
+    total_month = round(
+        sum(variable_portion_for_month(e, y, m) for e in all_user_expenses), 2
+    )
     by_category: dict[str, float] = {}
-    for expense in expenses:
+    for expense in all_user_expenses:
+        portion = variable_portion_for_month(expense, y, m)
+        if portion <= 0:
+            continue
         cat = expense.category.value
-        by_category[cat] = round(by_category.get(cat, 0) + expense.base_amount, 2)
-
+        by_category[cat] = round(by_category.get(cat, 0) + portion, 2)
+    count_nonzero = sum(
+        1 for e in all_user_expenses if variable_portion_for_month(e, y, m) > 0
+    )
     return ExpenseStats(
         total_month_base=total_month,
         base_currency=current_user.base_currency,
         by_category=by_category,
-        total_expenses=len(expenses),
+        total_expenses=count_nonzero,
     )
 
 
@@ -612,6 +905,13 @@ async def update_expense(
         current_user, final_pm, proposed_bank
     )
 
+    if final_pm != PaymentMethod.TARJETA_CREDITO or not expense.credit_card_bank:
+        expense.credit_installments = 1
+    elif update_data.credit_installments is not None:
+        expense.credit_installments = max(
+            1, min(60, int(update_data.credit_installments))
+        )
+
     session.add(expense)
     session.commit()
     session.refresh(expense)
@@ -644,7 +944,6 @@ def get_budget_summary(
     session: Session = Depends(get_session),
 ) -> BudgetSummary:
     _validate_year_month(year, month)
-    start, end = _month_bounds_utc(year, month)
 
     budget = session.exec(
         select(MonthlyBudget).where(
@@ -678,17 +977,24 @@ def get_budget_summary(
         2,
     )
 
-    variable = session.exec(
-        select(Expense).where(
-            Expense.user_id == current_user.id,
-            Expense.created_at >= start,
-            Expense.created_at < end,
-        )
+    all_expenses = session.exec(
+        select(Expense).where(Expense.user_id == current_user.id)
     ).all()
-    total_variable = round(sum(e.base_amount for e in variable), 2)
+    variable_all = round(
+        sum(variable_portion_for_month(e, year, month) for e in all_expenses), 2
+    )
+    cc_rows = _credit_card_month_rows_for_period(
+        session, current_user.id, year, month, current_user
+    )
+    cc_due = round(sum(r.amount for r in cc_rows), 2)
+    cc_paid_total = round(sum(r.amount for r in cc_rows if r.paid), 2)
+    variable_net = round(variable_all - cc_due + cc_paid_total, 2)
+
+    manual_fixed_paid = total_fixed
+    total_fixed_display = round(manual_fixed_paid + cc_paid_total, 2)
 
     total_income = round(salary + total_extra, 2)
-    total_out = round(total_fixed + total_variable, 2)
+    total_out = round(manual_fixed_paid + variable_net, 2)
     remaining = round(total_income - total_out, 2)
 
     return BudgetSummary(
@@ -699,12 +1005,63 @@ def get_budget_summary(
         salary_usd=salary_usd,
         salary_cripto_rate_used=salary_cripto,
         total_extra_income=total_extra,
-        total_fixed_expenses=total_fixed,
-        total_variable_expenses=total_variable,
+        total_fixed_expenses=total_fixed_display,
+        total_variable_expenses=variable_net,
         total_income=total_income,
         total_outflows=total_out,
         remaining=remaining,
+        credit_card_monthly_by_bank=cc_rows,
     )
+
+
+@app.get("/finances/credit-cards/breakdown", response_model=CreditCardBreakdown)
+def get_credit_card_breakdown(
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> CreditCardBreakdown:
+    _validate_year_month(year, month)
+    return _credit_card_breakdown(
+        session, current_user.id, year, month, current_user.base_currency
+    )
+
+
+@app.put("/finances/credit-cards/period-paid", status_code=status.HTTP_204_NO_CONTENT)
+def set_credit_card_period_paid(
+    body: CreditCardPeriodPaidBody,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> None:
+    _validate_year_month(body.year, body.month)
+    bank = body.bank.strip()
+    if not bank:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Indicá el banco",
+        )
+    existing = session.exec(
+        select(CreditCardPeriodPaid).where(
+            CreditCardPeriodPaid.user_id == current_user.id,
+            CreditCardPeriodPaid.year == body.year,
+            CreditCardPeriodPaid.month == body.month,
+            CreditCardPeriodPaid.bank == bank,
+        )
+    ).first()
+    if existing:
+        existing.paid = body.paid
+        session.add(existing)
+    else:
+        session.add(
+            CreditCardPeriodPaid(
+                user_id=current_user.id,
+                year=body.year,
+                month=body.month,
+                bank=bank,
+                paid=body.paid,
+            )
+        )
+    session.commit()
 
 
 def _monthly_budget_read_from_row(row: MonthlyBudget) -> MonthlyBudgetRead:

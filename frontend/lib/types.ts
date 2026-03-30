@@ -16,13 +16,47 @@ export type PaymentMethod =
   | "Mercado Pago / QR"
   | "Otro";
 
+/** Tarjeta configurada: vencimiento por día de calendario o por N-ésimo día hábil (lun–vie). */
+export interface CreditCardBankEntry {
+  name: string;
+  due_mode: "calendar" | "business";
+  /** Si due_mode es calendar: día 1–31. */
+  due_day: number | null;
+  /** Si due_mode es business: 1.º, 2.º, … día hábil del mes. */
+  business_nth: number | null;
+}
+
+/** Normaliza respuestas viejas o mezcladas (solo nombre vs objeto completo). */
+export function normalizeCreditCardBanks(
+  banks: (string | CreditCardBankEntry)[] | undefined
+): CreditCardBankEntry[] {
+  if (!banks?.length) return [];
+  return banks.map((b) => {
+    if (typeof b === "string") {
+      return {
+        name: b,
+        due_mode: "calendar" as const,
+        due_day: null,
+        business_nth: null,
+      };
+    }
+    const mode = b.due_mode === "business" ? ("business" as const) : ("calendar" as const);
+    return {
+      name: b.name,
+      due_mode: mode,
+      due_day: b.due_day ?? null,
+      business_nth: b.business_nth ?? null,
+    };
+  });
+}
+
 export interface User {
   id: string;
   email: string;
   full_name: string;
   base_currency: string;
-  /** Bancos donde tenés tarjeta de crédito (para asociar gastos). */
-  credit_card_banks?: string[];
+  /** Bancos con tarjeta (nombre + día de vencimiento del resumen). */
+  credit_card_banks?: CreditCardBankEntry[];
   created_at: string;
 }
 
@@ -46,6 +80,8 @@ export interface Expense {
   payment_method: PaymentMethod;
   /** Solo si el medio es Tarjeta de crédito. */
   credit_card_bank?: string | null;
+  /** Cuotas (solo tarjeta de crédito; 1 = un pago). */
+  credit_installments?: number;
   created_at: string;
 }
 
@@ -81,6 +117,51 @@ export interface BudgetSummary {
   total_income: number;
   total_outflows: number;
   remaining: number;
+  /** Cuotas de tarjeta del mes (para mostrar como “Pago Tarjeta …”). */
+  credit_card_monthly_by_bank?: CreditCardBankMonthRow[];
+}
+
+export interface CreditCardBankMonthRow {
+  bank: string;
+  amount: number;
+  label: string;
+  /** Pagado este mes (misma semántica que un gasto fijo marcado). */
+  paid: boolean;
+  due_mode?: string | null;
+  due_day?: number | null;
+  business_nth?: number | null;
+}
+
+export interface CreditCardPeriodPaidBody {
+  year: number;
+  month: number;
+  bank: string;
+  paid: boolean;
+}
+
+export interface CreditCardPurchaseLine {
+  expense_id: number;
+  description: string;
+  bank: string;
+  total_base: number;
+  installments: number;
+  installment_amount: number;
+  current_installment_index: number;
+  installments_remaining_after: number;
+  purchase_date: string;
+}
+
+export interface CreditCardBankDetail {
+  bank: string;
+  total_due_this_month: number;
+  purchases: CreditCardPurchaseLine[];
+}
+
+export interface CreditCardBreakdown {
+  year: number;
+  month: number;
+  base_currency: string;
+  banks: CreditCardBankDetail[];
 }
 
 export interface MonthlyBudgetUpsert {
@@ -144,6 +225,7 @@ export interface ExpenseCreate {
   original_currency: string;
   payment_method?: PaymentMethod;
   credit_card_bank?: string | null;
+  credit_installments?: number;
 }
 
 export interface AuthToken {
@@ -158,12 +240,13 @@ export interface ExpenseUpdate {
   original_currency?: string;
   payment_method?: PaymentMethod;
   credit_card_bank?: string | null;
+  credit_installments?: number;
 }
 
 export interface UserUpdate {
   full_name?: string;
   base_currency?: string;
-  credit_card_banks?: string[];
+  credit_card_banks?: CreditCardBankEntry[];
   current_password?: string;
   new_password?: string;
 }

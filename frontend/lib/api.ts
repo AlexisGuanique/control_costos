@@ -1,6 +1,8 @@
 import type {
   AuthToken,
   BudgetSummary,
+  CreditCardBreakdown,
+  CreditCardPeriodPaidBody,
   DollarRate,
   Expense,
   ExpenseBasePreview,
@@ -194,6 +196,26 @@ export async function getBudgetSummary(year: number, month: number): Promise<Bud
   const params = new URLSearchParams({ year: String(year), month: String(month) });
   const res = await fetch(`${API_URL}/finances/summary?${params}`, { headers: authHeaders() });
   return handleResponse<BudgetSummary>(res);
+}
+
+export async function getCreditCardBreakdown(
+  year: number,
+  month: number
+): Promise<CreditCardBreakdown> {
+  const params = new URLSearchParams({ year: String(year), month: String(month) });
+  const res = await fetch(`${API_URL}/finances/credit-cards/breakdown?${params}`, {
+    headers: authHeaders(),
+  });
+  return handleResponse<CreditCardBreakdown>(res);
+}
+
+export async function setCreditCardPeriodPaid(body: CreditCardPeriodPaidBody): Promise<void> {
+  const res = await fetch(`${API_URL}/finances/credit-cards/period-paid`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  await handleResponse<void>(res);
 }
 
 export async function upsertMonthlyBudget(data: MonthlyBudgetUpsert): Promise<void> {

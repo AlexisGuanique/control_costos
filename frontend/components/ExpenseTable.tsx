@@ -121,6 +121,10 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                   {expense.payment_method === "Tarjeta de crédito" && expense.credit_card_bank
                     ? ` · ${expense.credit_card_bank}`
                     : ""}
+                  {expense.payment_method === "Tarjeta de crédito" &&
+                  (expense.credit_installments ?? 1) > 1
+                    ? ` · ${expense.credit_installments ?? 1} cuotas`
+                    : ""}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-slate-300">
                   {formatCurrency(expense.original_amount, expense.original_currency)}{" "}
