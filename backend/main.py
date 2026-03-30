@@ -577,7 +577,7 @@ def _add_months(year: int, month: int, delta: int) -> Tuple[int, int]:
 def variable_portion_for_month(e: Expense, year: int, month: int) -> float:
     """
     Monto que cuenta en el mes para presupuesto: compras no tarjeta o 1 cuota en el mes de compra;
-    tarjeta en N cuotas reparte base_amount/N en cada mes del plan (desde el mes de alta).
+    tarjeta en N cuotas reparte base_amount/N en cada mes del plan (desde el mes siguiente a la compra).
     """
     if e.payment_method != PaymentMethod.TARJETA_CREDITO:
         cy, cm = e.created_at.year, e.created_at.month
@@ -594,7 +594,8 @@ def variable_portion_for_month(e: Expense, year: int, month: int) -> float:
     per = e.base_amount / n
     sy, sm = e.created_at.year, e.created_at.month
     for i in range(n):
-        y_m, m_m = _add_months(sy, sm, i)
+        # La primera cuota se refleja el mes siguiente a la compra.
+        y_m, m_m = _add_months(sy, sm, i + 1)
         if (y_m, m_m) == (year, month):
             return round(per, 2)
     return 0.0
@@ -693,7 +694,8 @@ def _credit_card_breakdown(
             continue
         sy, sm = e.created_at.year, e.created_at.month
         for i in range(n):
-            y_m, m_m = _add_months(sy, sm, i)
+            # La primera cuota se refleja el mes siguiente a la compra.
+            y_m, m_m = _add_months(sy, sm, i + 1)
             if (y_m, m_m) != (year, month):
                 continue
             per = round(e.base_amount / n, 2)

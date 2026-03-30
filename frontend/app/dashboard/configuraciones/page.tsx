@@ -41,6 +41,11 @@ export default function ConfiguracionesPage() {
   const [bankBusinessNth, setBankBusinessNth] = useState("10");
   const [savingBanks, setSavingBanks] = useState(false);
 
+  const [editBank, setEditBank] = useState<CreditCardBankEntry | null>(null);
+  const [editDueMode, setEditDueMode] = useState<"calendar" | "business">("business");
+  const [editCalendarDay, setEditCalendarDay] = useState("");
+  const [editBusinessNth, setEditBusinessNth] = useState("10");
+
   const creditBanks = normalizeCreditCardBanks(user?.credit_card_banks ?? []);
 
   useEffect(() => {
@@ -138,6 +143,65 @@ export default function ConfiguracionesPage() {
       });
       setUser(updated);
       showToast("success", "Banco quitado de la lista.");
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Error al guardar");
+    } finally {
+      setSavingBanks(false);
+    }
+  }
+
+  function openEditBank(b: CreditCardBankEntry) {
+    setEditBank(b);
+    setEditDueMode(b.due_mode === "calendar" ? "calendar" : "business");
+    setEditCalendarDay(b.due_day != null ? String(b.due_day) : "");
+    setEditBusinessNth(b.business_nth != null ? String(b.business_nth) : "10");
+  }
+
+  function closeEditBank() {
+    if (savingBanks) return;
+    setEditBank(null);
+  }
+
+  async function handleSaveEditBank(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editBank) return;
+    const due_mode = editDueMode;
+    let due_day: number | null = null;
+    let business_nth: number | null = null;
+    if (due_mode === "calendar") {
+      const raw = editCalendarDay.trim();
+      if (raw) {
+        const d = parseInt(raw, 10);
+        if (Number.isNaN(d) || d < 1 || d > 31) {
+          showToast("error", "Día del mes: entre 1 y 31.");
+          return;
+        }
+        due_day = d;
+      }
+    } else {
+      const n = parseInt(editBusinessNth, 10);
+      if (Number.isNaN(n) || n < 1 || n > 23) {
+        showToast("error", "Elegí un día hábil entre 1 y 23.");
+        return;
+      }
+      business_nth = n;
+    }
+    const updatedEntry: CreditCardBankEntry = {
+      name: editBank.name,
+      due_mode,
+      due_day,
+      business_nth,
+    };
+    setSavingBanks(true);
+    try {
+      const updated = await updateMe({
+        credit_card_banks: creditBanks.map((b) =>
+          b.name === editBank.name ? updatedEntry : b
+        ),
+      });
+      setUser(updated);
+      setEditBank(null);
+      showToast("success", "Banco actualizado.");
     } catch (err: unknown) {
       showToast("error", err instanceof Error ? err.message : "Error al guardar");
     } finally {
@@ -356,6 +420,16 @@ export default function ConfiguracionesPage() {
                 <button
                   type="button"
                   disabled={savingBanks}
+                  onClick={() => openEditBank(b)}
+                  className="-mr-1 -mt-0.5 shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-600/80 hover:text-amber-300 disabled:opacity-50"
+                  aria-label={`Editar ${b.name}`}
+                  title="Editar vencimiento"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  disabled={savingBanks}
                   onClick={() => handleRemoveBank(b.name)}
                   className="-mr-1 -mt-0.5 shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-600/80 hover:text-red-400 disabled:opacity-50"
                   aria-label={`Quitar ${b.name}`}
@@ -365,6 +439,99 @@ export default function ConfiguracionesPage() {
               </li>
             ))}
           </ul>
+        )}
+
+        {/* Modal editar banco */}
+        {editBank && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/65 backdrop-blur-sm"
+              onClick={savingBanks ? undefined : closeEditBank}
+              aria-hidden
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="edit-cc-bank-title"
+              className="relative w-full max-w-lg bg-[#1e293b] border border-slate-600/80 rounded-2xl shadow-2xl shadow-black/40 overflow-hidden"
+            >
+              <div className="flex items-center justify-between gap-2 px-5 sm:px-6 py-4 border-b border-slate-700/50 bg-slate-800/40">
+                <div className="min-w-0">
+                  <h3 id="edit-cc-bank-title" className="text-base font-semibold text-white truncate">
+                    Editar banco: {editBank.name}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Solo editás el vencimiento del resumen (el nombre no se cambia).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeEditBank}
+                  disabled={savingBanks}
+                  className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+                  aria-label="Cerrar"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveEditBank} className="p-5 sm:p-6 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] gap-3 items-end">
+                  <div className="min-w-0">
+                    <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="edit-cc-due-mode">
+                      Tipo de vencimiento
+                    </label>
+                    <select
+                      id="edit-cc-due-mode"
+                      value={editDueMode}
+                      onChange={(e) => setEditDueMode(e.target.value as "calendar" | "business")}
+                      className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                    >
+                      <option value="business">N-ésimo día hábil (lun–vie)</option>
+                      <option value="calendar">Día fijo del calendario (1–31)</option>
+                    </select>
+                  </div>
+
+                  <div className="min-w-0">
+                    <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="edit-cc-due-value">
+                      {editDueMode === "business" ? "Qué día hábil" : "Día del mes"}
+                    </label>
+                    {editDueMode === "business" ? (
+                      <NthBusinessDaySelect
+                        id="edit-cc-due-value"
+                        value={editBusinessNth}
+                        onChange={setEditBusinessNth}
+                      />
+                    ) : (
+                      <input
+                        id="edit-cc-due-value"
+                        type="number"
+                        min={1}
+                        max={31}
+                        inputMode="numeric"
+                        value={editCalendarDay}
+                        onChange={(e) => setEditCalendarDay(e.target.value)}
+                        placeholder="Opcional"
+                        className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeEditBank}
+                    disabled={savingBanks}
+                    className="px-4 py-2.5 rounded-xl border border-slate-600 text-slate-300 hover:text-white hover:bg-slate-700/80 text-sm font-medium transition disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                  <SaveButton loading={savingBanks} label="Guardar cambios" />
+                </div>
+              </form>
+            </div>
+          </div>
         )}
       </Section>
 
