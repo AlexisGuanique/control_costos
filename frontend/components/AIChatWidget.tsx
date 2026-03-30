@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, Sparkles, X, Minimize2 } from "lucide-react";
+import { Send, Bot, User, Sparkles, X } from "lucide-react";
 import { createExpenseFromAI, createTripExpenseFromAI } from "@/lib/api";
 import type { Expense, TripExpense } from "@/lib/types";
 
@@ -119,12 +119,18 @@ export default function AIChatWidget({
       {/* Floating button */}
       {!isOpen && (
         <button
+          type="button"
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-500 text-white rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 z-50 group"
+          className="fixed z-50 flex h-12 w-12 items-center justify-center rounded-full bg-blue-600 text-white shadow-2xl transition-all hover:bg-blue-500 hover:scale-105 sm:h-14 sm:w-14 sm:hover:scale-110
+            bottom-[max(1rem,env(safe-area-inset-bottom,0px))]
+            left-[max(1rem,env(safe-area-inset-left,0px))]
+            sm:left-auto sm:right-[max(1.5rem,env(safe-area-inset-right,0px))] sm:bottom-[max(1.5rem,env(safe-area-inset-bottom,0px))]
+            group"
           title={variant === "trip" ? "Gastos del viaje con IA" : "Abrir asistente IA"}
+          aria-label={variant === "trip" ? "Abrir IA del viaje" : "Abrir asistente IA"}
         >
-          <Sparkles className="w-6 h-6" />
-          <span className="absolute right-16 bg-slate-800 text-white text-sm px-3 py-1.5 rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition border border-slate-600 shadow-lg">
+          <Sparkles className="h-5 w-5 sm:h-6 sm:w-6" />
+          <span className="pointer-events-none absolute bottom-full left-0 mb-2 hidden rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-white opacity-0 shadow-lg transition group-hover:opacity-100 sm:bottom-auto sm:left-auto sm:right-16 sm:top-1/2 sm:mb-0 sm:block sm:-translate-y-1/2">
             {variant === "trip" ? "IA viaje" : "Asistente IA"}
           </span>
         </button>
@@ -132,15 +138,28 @@ export default function AIChatWidget({
 
       {/* Chat panel */}
       {isOpen && (
-        <div className="fixed bottom-6 right-6 w-96 max-h-[600px] flex flex-col bg-[#1e293b] border border-slate-700 rounded-2xl shadow-2xl z-50 overflow-hidden">
+        <div
+          className="fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#1e293b] shadow-2xl
+            left-[max(0.75rem,env(safe-area-inset-left,0px))]
+            right-[max(0.75rem,env(safe-area-inset-right,0px))]
+            bottom-[max(0.75rem,env(safe-area-inset-bottom,0px))]
+            h-[min(560px,calc(100dvh-env(safe-area-inset-bottom,0px)-1rem))]
+            max-h-[min(600px,calc(100dvh-env(safe-area-inset-bottom,0px)-1rem))]
+            sm:left-auto sm:right-[max(1.5rem,env(safe-area-inset-right,0px))]
+            sm:bottom-[max(1.5rem,env(safe-area-inset-bottom,0px))]
+            sm:h-auto sm:max-h-[min(600px,calc(100dvh-env(safe-area-inset-bottom,0px)-1.5rem))]
+            sm:w-96"
+          role="dialog"
+          aria-label={variant === "trip" ? "Chat IA del viaje" : "Asistente FinTrack"}
+        >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 rounded-t-2xl">
+          <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-3 sm:px-4 bg-gradient-to-r from-blue-600 to-blue-700 rounded-t-2xl">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center">
                 <Bot className="w-5 h-5 text-white" />
               </div>
-              <div>
-                <p className="font-semibold text-white text-sm">
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-white text-sm">
                   {variant === "trip" ? "IA · Gastos del viaje" : "Asistente FinTrack"}
                 </p>
                 <div className="flex items-center gap-1">
@@ -150,15 +169,17 @@ export default function AIChatWidget({
               </div>
             </div>
             <button
+              type="button"
               onClick={() => setIsOpen(false)}
-              className="text-blue-200 hover:text-white transition"
+              className="shrink-0 rounded-lg p-1 text-blue-200 transition hover:bg-white/10 hover:text-white"
+              aria-label="Cerrar asistente"
             >
-              <X className="w-5 h-5" />
+              <X className="h-5 w-5" />
             </button>
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0 max-h-80">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 sm:max-h-80 sm:flex-none">
             {messages.map((msg) => (
               <ChatBubble key={msg.id} message={msg} variant={variant} />
             ))}
@@ -183,7 +204,7 @@ export default function AIChatWidget({
 
           {/* Suggestions */}
           {messages.length <= 1 && (
-            <div className="px-4 pb-2 flex flex-wrap gap-1.5">
+            <div className="shrink-0 px-4 pb-2 flex flex-wrap gap-1.5">
               {(variant === "trip" ? SUGGESTIONS_TRIP : SUGGESTIONS_PERSONAL).map((s) => (
                 <button
                   key={s}
@@ -197,7 +218,7 @@ export default function AIChatWidget({
           )}
 
           {/* Input */}
-          <div className="p-3 border-t border-slate-700 bg-slate-800/50">
+          <div className="shrink-0 border-t border-slate-700 bg-slate-800/50 p-3">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -243,7 +264,9 @@ function ChatBubble({
   const isError = message.role === "error";
 
   return (
-    <div className={`flex items-start gap-2 ${isUser ? "flex-row-reverse" : ""}`}>
+    <div
+      className={`flex items-start gap-3 ${isUser ? "flex-row-reverse" : ""}`}
+    >
       <div
         className={`w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-xs ${
           isUser ? "bg-blue-500" : isError ? "bg-red-500/20" : "bg-blue-500/20"
@@ -300,8 +323,17 @@ function ChatBubble({
               Gasto registrado
             </p>
             <p className="font-medium text-white">{message.expense.description}</p>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400">{message.expense.category}</span>
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs">
+              <span className="text-slate-400">
+                {message.expense.category}
+                <span className="text-slate-500">
+                  {" "}
+                  · {message.expense.payment_method}
+                  {message.expense.payment_method === "Tarjeta de crédito" &&
+                    message.expense.credit_card_bank &&
+                    ` (${message.expense.credit_card_bank})`}
+                </span>
+              </span>
               <span className="text-emerald-400 font-semibold">
                 {message.expense.original_currency !== "ARS"
                   ? `${message.expense.original_amount} ${message.expense.original_currency} → `

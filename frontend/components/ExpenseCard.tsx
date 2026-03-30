@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Trash2, Pencil, Bot, ArrowRight, Calendar } from "lucide-react";
 import { deleteExpense } from "@/lib/api";
 import type { Expense } from "@/lib/types";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 const CATEGORY_COLORS: Record<string, { badge: string; dot: string }> = {
   Supermercado:  { badge: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",  dot: "bg-emerald-400" },
@@ -40,16 +41,20 @@ interface Props {
 
 export default function ExpenseCard({ expense, baseCurrency, onDeleted, onEdit }: Props) {
   const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const colors = CATEGORY_COLORS[expense.category] ?? CATEGORY_COLORS.Otro;
   const isConverted = expense.original_currency !== baseCurrency;
 
-  async function handleDelete() {
+  async function executeDelete() {
     setDeleting(true);
     try {
       await deleteExpense(expense.id);
+      setConfirmDelete(false);
       onDeleted(expense.id);
     } catch {
+      /* sin toast: el usuario puede reintentar */
+    } finally {
       setDeleting(false);
     }
   }
@@ -72,11 +77,17 @@ export default function ExpenseCard({ expense, baseCurrency, onDeleted, onEdit }
         )}
       </div>
 
-      {/* Category */}
-      <div className="flex items-center gap-2">
+      {/* Category + payment */}
+      <div className="flex flex-wrap items-center gap-2">
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${colors.badge}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
           {expense.category}
+        </span>
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border border-amber-500/25 bg-amber-500/10 text-amber-200/90">
+          {expense.payment_method ?? "Otro"}
+          {expense.payment_method === "Tarjeta de crédito" && expense.credit_card_bank
+            ? ` · ${expense.credit_card_bank}`
+            : ""}
         </span>
       </div>
 
@@ -123,6 +134,7 @@ export default function ExpenseCard({ expense, baseCurrency, onDeleted, onEdit }
 
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={() => onEdit(expense)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 border border-transparent hover:border-blue-500/20 transition-all"
           >
@@ -130,19 +142,27 @@ export default function ExpenseCard({ expense, baseCurrency, onDeleted, onEdit }
             Editar
           </button>
           <button
-            onClick={handleDelete}
+            type="button"
+            onClick={() => setConfirmDelete(true)}
             disabled={deleting}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all disabled:cursor-wait"
           >
-            {deleting ? (
-              <span className="w-3.5 h-3.5 border-2 border-slate-500 border-t-red-400 rounded-full animate-spin" />
-            ) : (
-              <Trash2 className="w-3.5 h-3.5" />
-            )}
+            <Trash2 className="w-3.5 h-3.5" />
             Eliminar
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Eliminar gasto"
+        message={`¿Eliminar “${expense.description}” por ${formatAmount(expense.base_amount, baseCurrency)}? Esta acción no se puede deshacer.`}
+        confirmLabel="Eliminar"
+        variant="danger"
+        loading={deleting}
+        onConfirm={executeDelete}
+        onCancel={() => !deleting && setConfirmDelete(false)}
+      />
     </div>
   );
 }

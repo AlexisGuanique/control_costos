@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Trash2, ArrowUpDown, Bot, Pencil } from "lucide-react";
 import type { Expense } from "@/lib/types";
 import { deleteExpense } from "@/lib/api";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 const CATEGORY_COLORS: Record<string, string> = {
   Supermercado: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
@@ -40,6 +41,7 @@ interface Props {
 
 export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit }: Props) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
   const [sortAsc, setSortAsc] = useState(false);
 
   const sorted = [...expenses].sort((a, b) => {
@@ -47,13 +49,16 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
     return sortAsc ? diff : -diff;
   });
 
-  async function handleDelete(id: number) {
+  async function executeDelete() {
+    if (!deleteTarget) return;
+    const id = deleteTarget.id;
     setDeletingId(id);
     try {
       await deleteExpense(id);
+      setDeleteTarget(null);
       onDeleted(id);
     } catch {
-      // silently ignore
+      /* ignore */
     } finally {
       setDeletingId(null);
     }
@@ -75,6 +80,7 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
           <tr className="bg-slate-800/60 text-slate-400 uppercase text-xs tracking-wider">
             <th className="text-left px-4 py-3">Descripción</th>
             <th className="text-left px-4 py-3">Categoría</th>
+            <th className="text-left px-4 py-3 hidden sm:table-cell">Pago</th>
             <th className="text-right px-4 py-3">Original</th>
             <th className="text-right px-4 py-3">
               {baseCurrency}
@@ -82,6 +88,7 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
             <th className="text-center px-4 py-3">Origen</th>
             <th className="text-left px-4 py-3">
               <button
+                type="button"
                 onClick={() => setSortAsc(!sortAsc)}
                 className="flex items-center gap-1 hover:text-white transition"
               >
@@ -108,6 +115,12 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                   >
                     {expense.category}
                   </span>
+                </td>
+                <td className="px-4 py-3 text-slate-300 text-xs max-w-[9rem] truncate hidden sm:table-cell">
+                  {expense.payment_method ?? "Otro"}
+                  {expense.payment_method === "Tarjeta de crédito" && expense.credit_card_bank
+                    ? ` · ${expense.credit_card_bank}`
+                    : ""}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-slate-300">
                   {formatCurrency(expense.original_amount, expense.original_currency)}{" "}
@@ -141,6 +154,7 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
                     {onEdit && (
                       <button
+                        type="button"
                         onClick={() => onEdit(expense)}
                         className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition"
                         title="Editar gasto"
@@ -149,7 +163,8 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                       </button>
                     )}
                     <button
-                      onClick={() => handleDelete(expense.id)}
+                      type="button"
+                      onClick={() => setDeleteTarget(expense)}
                       disabled={deletingId === expense.id}
                       className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 disabled:cursor-wait transition"
                       title="Eliminar gasto"
@@ -167,6 +182,23 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
           })}
         </tbody>
       </table>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Eliminar gasto"
+        message={
+          deleteTarget
+            ? `¿Eliminar “${deleteTarget.description}” por ${formatCurrency(deleteTarget.base_amount, baseCurrency)}? Esta acción no se puede deshacer.`
+            : ""
+        }
+        confirmLabel="Eliminar"
+        variant="danger"
+        loading={deleteTarget !== null && deletingId === deleteTarget.id}
+        onConfirm={executeDelete}
+        onCancel={() =>
+          !(deleteTarget && deletingId === deleteTarget.id) && setDeleteTarget(null)
+        }
+      />
     </div>
   );
 }

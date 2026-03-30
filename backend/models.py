@@ -3,7 +3,12 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, List
 
+from sqlalchemy import Column, Enum as SAEnum, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel, Relationship
+
+
+def _enum_values(enum_cls: type[Enum]) -> list[str]:
+    return [e.value for e in enum_cls]
 
 
 class ExpenseCategory(str, Enum):
@@ -20,6 +25,15 @@ class ExpenseSource(str, Enum):
     WEBCHAT = "WebChat"
 
 
+class PaymentMethod(str, Enum):
+    EFECTIVO = "Efectivo"
+    TRANSFERENCIA = "Transferencia"
+    TARJETA_CREDITO = "Tarjeta de crédito"
+    TARJETA_DEBITO = "Tarjeta de débito"
+    MERCADOPAGO = "Mercado Pago / QR"
+    OTRO = "Otro"
+
+
 class User(SQLModel, table=True):
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
@@ -29,6 +43,11 @@ class User(SQLModel, table=True):
     password_hash: str
     full_name: str
     base_currency: str = Field(default="ARS")
+    credit_card_banks: List[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSON),
+        description="Bancos donde el usuario tiene tarjeta de crédito (para asociar gastos).",
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     expenses: List["Expense"] = Relationship(back_populates="user")
@@ -44,6 +63,22 @@ class Expense(SQLModel, table=True):
     exchange_rate_used: float = Field(default=1.0)
     base_amount: float
     source: ExpenseSource = Field(default=ExpenseSource.MANUAL)
+    payment_method: PaymentMethod = Field(
+        default=PaymentMethod.OTRO,
+        sa_column=Column(
+            SAEnum(
+                PaymentMethod,
+                values_callable=_enum_values,
+                native_enum=False,
+                length=64,
+            ),
+        ),
+    )
+    credit_card_bank: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Banco de la tarjeta (solo si el medio es Tarjeta de crédito).",
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     user: Optional[User] = Relationship(back_populates="expenses")
@@ -63,6 +98,7 @@ class UserRead(SQLModel):
     email: str
     full_name: str
     base_currency: str
+    credit_card_banks: List[str] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -79,6 +115,8 @@ class ExpenseCreate(SQLModel):
     category: ExpenseCategory = ExpenseCategory.OTRO
     original_amount: float
     original_currency: str = "ARS"
+    payment_method: PaymentMethod = PaymentMethod.OTRO
+    credit_card_bank: Optional[str] = None
 
 
 class AIExpenseRequest(SQLModel):
@@ -95,6 +133,8 @@ class ExpenseRead(SQLModel):
     exchange_rate_used: float
     base_amount: float
     source: ExpenseSource
+    payment_method: PaymentMethod
+    credit_card_bank: Optional[str] = None
     created_at: datetime
 
 
@@ -108,6 +148,7 @@ class ExpenseStats(SQLModel):
 class UserUpdate(SQLModel):
     full_name: Optional[str] = None
     base_currency: Optional[str] = None
+    credit_card_banks: Optional[List[str]] = None
     current_password: Optional[str] = None
     new_password: Optional[str] = None
 
@@ -117,6 +158,160 @@ class ExpenseUpdate(SQLModel):
     category: Optional[ExpenseCategory] = None
     original_amount: Optional[float] = None
     original_currency: Optional[str] = None
+    payment_method: Optional[PaymentMethod] = None
+    credit_card_bank: Optional[str] = None
+
+
+# ─── Presupuesto personal (sueldo, fijos, ingresos extra) ─────────────────────
+
+class MonthlyBudget(SQLModel, table=True):
+    """Sueldo base registrado por mes (en moneda base del usuario)."""
+
+    __tablename__ = "monthlybudget"
+    __table_args__ = (
+        UniqueConstraint("user_id", "year", "month", name="uq_monthlybudget_user_period"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(foreign_key="user.id", index=True)
+    year: int
+    month: int
+    salary: float = Field(default=0.0, description="Monto en moneda base del usuario (presupuesto).")
+    salary_usd: Optional[float] = Field(default=None, description="Monto en USD si se cargó en dólares.")
+    cripto_rate_used: Optional[float] = Field(
+        default=None, description="Venta dólar cripto (ARS por USD) al guardar."
+    )
+
+
+class FixedExpense(SQLModel, table=True):
+    """Gastos fijos recurrentes (ej. alquiler), en moneda base."""
+
+    __tablename__ = "fixedexpense"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(foreign_key="user.id", index=True)
+    name: str
+    amount: float
+    is_active: bool = Field(default=True)
+    due_day: Optional[int] = Field(
+        default=None,
+        description="Día del mes en que vence (1–31). None = sin fecha fija.",
+    )
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FixedExpensePeriodPayment(SQLModel, table=True):
+    """Marca un gasto fijo como pagado en un mes calendario concreto."""
+
+    __tablename__ = "fixedexpenseperiodpayment"
+    __table_args__ = (
+        UniqueConstraint(
+            "fixed_expense_id",
+            "year",
+            "month",
+            name="uq_fixedexpenseperiodpayment_period",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fixed_expense_id: int = Field(foreign_key="fixedexpense.id", index=True)
+    year: int
+    month: int
+    paid_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExtraIncome(SQLModel, table=True):
+    """Ingresos adicionales al sueldo, por mes calendario."""
+
+    __tablename__ = "extraincome"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(foreign_key="user.id", index=True)
+    year: int
+    month: int
+    description: str
+    amount: float
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MonthlyBudgetUpsert(SQLModel):
+    year: int
+    month: int
+    salary: float
+    salary_currency: str = "USD"
+    """USD: convierte con dólar cripto a tu moneda base. ARS: guarda el monto tal cual."""
+
+
+class MonthlyBudgetRead(SQLModel):
+    id: int
+    user_id: str
+    year: int
+    month: int
+    salary: float
+    salary_usd: Optional[float] = None
+    cripto_rate_used: Optional[float] = None
+
+
+class FixedExpenseCreate(SQLModel):
+    name: str
+    amount: float
+    due_day: Optional[int] = None
+
+
+class FixedExpenseUpdate(SQLModel):
+    name: Optional[str] = None
+    amount: Optional[float] = None
+    is_active: Optional[bool] = None
+    due_day: Optional[int] = None
+
+
+class FixedExpenseRead(SQLModel):
+    id: int
+    user_id: str
+    name: str
+    amount: float
+    is_active: bool
+    due_day: Optional[int] = None
+    created_at: datetime
+    paid_this_period: bool = False
+
+
+class FixedExpensePeriodPaidBody(SQLModel):
+    year: int
+    month: int
+    paid: bool
+
+
+class ExtraIncomeCreate(SQLModel):
+    year: int
+    month: int
+    description: str
+    amount: float
+
+
+class ExtraIncomeRead(SQLModel):
+    id: int
+    user_id: str
+    year: int
+    month: int
+    description: str
+    amount: float
+    created_at: datetime
+
+
+class BudgetSummary(SQLModel):
+    year: int
+    month: int
+    base_currency: str
+    salary: float
+    salary_usd: Optional[float] = Field(default=None)
+    salary_cripto_rate_used: Optional[float] = Field(default=None)
+    total_extra_income: float
+    total_fixed_expenses: float
+    total_variable_expenses: float
+    total_income: float
+    total_outflows: float
+    remaining: float
 
 
 # ─── Trip models ──────────────────────────────────────────────────────────────

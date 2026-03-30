@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Settings, User, Lock, Globe,
   CheckCircle, AlertCircle, Mail, Pencil,
+  CreditCard, X,
 } from "lucide-react";
 import { updateMe } from "@/lib/api";
 import { useUser } from "@/lib/UserContext";
@@ -31,6 +32,11 @@ export default function ConfiguracionesPage() {
   const [newPw, setNewPw]           = useState("");
   const [confirmPw, setConfirmPw]   = useState("");
   const [savingPw, setSavingPw]     = useState(false);
+
+  const [bankInput, setBankInput] = useState("");
+  const [savingBanks, setSavingBanks] = useState(false);
+
+  const creditBanks = user?.credit_card_banks ?? [];
 
   useEffect(() => {
     if (user) {
@@ -70,6 +76,42 @@ export default function ConfiguracionesPage() {
       showToast("error", err instanceof Error ? err.message : "Error al guardar");
     } finally {
       setSavingCurrency(false);
+    }
+  }
+
+  async function handleAddBank(e: React.FormEvent) {
+    e.preventDefault();
+    const name = bankInput.trim();
+    if (!name) return;
+    if (creditBanks.some((b) => b.toLowerCase() === name.toLowerCase())) {
+      showToast("error", "Ese banco ya está en la lista.");
+      return;
+    }
+    setSavingBanks(true);
+    try {
+      const updated = await updateMe({ credit_card_banks: [...creditBanks, name] });
+      setUser(updated);
+      setBankInput("");
+      showToast("success", "Banco agregado.");
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Error al guardar");
+    } finally {
+      setSavingBanks(false);
+    }
+  }
+
+  async function handleRemoveBank(bank: string) {
+    setSavingBanks(true);
+    try {
+      const updated = await updateMe({
+        credit_card_banks: creditBanks.filter((b) => b !== bank),
+      });
+      setUser(updated);
+      showToast("success", "Banco quitado de la lista.");
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Error al guardar");
+    } finally {
+      setSavingBanks(false);
     }
   }
 
@@ -190,6 +232,55 @@ export default function ConfiguracionesPage() {
           )}
           <SaveButton loading={savingCurrency} label="Guardar moneda" />
         </form>
+      </Section>
+
+      {/* ── Tarjetas de crédito ── */}
+      <Section
+        icon={<CreditCard className="w-5 h-5 text-amber-400" />}
+        title="Bancos con tarjeta de crédito"
+        description="Agregá en qué bancos tenés tarjeta; al registrar un gasto con medio «Tarjeta de crédito» podrás elegir el banco"
+      >
+        <p className="text-xs text-slate-500 leading-relaxed">
+          Si no cargás ninguno, podés escribir el banco a mano al cargar el gasto. Si cargás bancos acá, el gasto te pedirá elegir uno de la lista.
+        </p>
+        <form onSubmit={handleAddBank} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="flex-1 min-w-0">
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">
+              Nombre del banco
+            </label>
+            <input
+              type="text"
+              value={bankInput}
+              onChange={(e) => setBankInput(e.target.value)}
+              placeholder="Ej: Galicia, Santander…"
+              className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-3 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition"
+            />
+          </div>
+          <SaveButton loading={savingBanks} label="Agregar banco" />
+        </form>
+        {creditBanks.length === 0 ? (
+          <p className="text-sm text-slate-500">Todavía no agregaste ningún banco.</p>
+        ) : (
+          <ul className="flex flex-wrap gap-2">
+            {creditBanks.map((b) => (
+              <li
+                key={b}
+                className="inline-flex items-center gap-1.5 pl-3 pr-1 py-1.5 rounded-xl bg-slate-700/50 border border-slate-600 text-sm text-slate-200"
+              >
+                {b}
+                <button
+                  type="button"
+                  disabled={savingBanks}
+                  onClick={() => handleRemoveBank(b)}
+                  className="p-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-600/80 transition disabled:opacity-50"
+                  aria-label={`Quitar ${b}`}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </Section>
 
       {/* ── Seguridad ── */}
