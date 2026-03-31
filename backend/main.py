@@ -123,6 +123,75 @@ def _validate_due_day(value: Optional[int]) -> None:
         )
 
 
+def _validate_cut_day(value: Optional[int]) -> None:
+    if value is None:
+        return
+    if value < 1 or value > 31:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El día de corte debe estar entre 1 y 31",
+        )
+
+
+def _nth_weekday_of_month_date(year: int, month: int, weekday: int, nth: int) -> Optional[date]:
+    """Devuelve la fecha de la N-ésima ocurrencia de weekday en el mes (1..5)."""
+    if weekday < 0 or weekday > 6 or nth < 1 or nth > 5:
+        return None
+    last = calendar.monthrange(year, month)[1]
+    count = 0
+    for day in range(1, last + 1):
+        d = date(year, month, day)
+        if d.weekday() == weekday:
+            count += 1
+            if count == nth:
+                return d
+    return None
+
+
+def _cut_date_for_month(cfg: Optional[CreditCardBankEntry], year: int, month: int) -> Optional[date]:
+    """
+    Fecha de corte del mes para un banco.
+    - none: sin corte (legacy)
+    - calendar: día del mes (cut_day)
+    - weekday: N-ésimo día de semana hábil (ej. 3er jueves del mes; lun–vie)
+    Nota: días hábiles = lun–vie; no considera feriados.
+    """
+    if not cfg:
+        return None
+    mode = str(getattr(cfg, "cut_mode", "none") or "none").strip().lower()
+    if mode in ("", "none", "null"):
+        return None
+    if mode == "calendar":
+        cd = getattr(cfg, "cut_day", None)
+        if cd is None:
+            return None
+        try:
+            d_int = int(cd)
+        except (TypeError, ValueError):
+            return None
+        if d_int < 1 or d_int > 31:
+            return None
+        last = calendar.monthrange(year, month)[1]
+        return date(year, month, min(d_int, last))
+    if mode == "weekday":
+        wd = getattr(cfg, "cut_weekday", None)
+        nth = getattr(cfg, "cut_weekday_nth", None)
+        if wd is None or nth is None:
+            return None
+        try:
+            wd_i = int(wd)
+            nth_i = int(nth)
+        except (TypeError, ValueError):
+            return None
+        d = _nth_weekday_of_month_date(year, month, wd_i, nth_i)
+        if not d:
+            return None
+        if d.weekday() >= 5:
+            return None
+        return d
+    return None
+
+
 def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntry]:
     """Normaliza JSON: legado list[str], list[{name, due_day}], o con due_mode/business_nth."""
     if not raw:
@@ -146,6 +215,10 @@ def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntr
                     due_mode="calendar",
                     due_day=None,
                     business_nth=None,
+                    cut_mode="none",
+                    cut_day=None,
+                    cut_weekday=None,
+                    cut_weekday_nth=None,
                 )
             )
         elif isinstance(item, dict):
@@ -177,6 +250,52 @@ def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntr
                         business_nth = bi
                 except (TypeError, ValueError):
                     pass
+
+            cut_mode_raw = str(item.get("cut_mode") or "none").strip().lower()
+            if cut_mode_raw not in ("none", "calendar", "weekday"):
+                cut_mode_raw = "none"
+            cut_day_raw = item.get("cut_day")
+            cut_day: Optional[int] = None
+            if cut_day_raw is not None:
+                try:
+                    ci = int(cut_day_raw)
+                    if 1 <= ci <= 31:
+                        cut_day = ci
+                except (TypeError, ValueError):
+                    pass
+            cut_wd_raw = item.get("cut_weekday")
+            cut_weekday: Optional[int] = None
+            if cut_wd_raw is not None:
+                try:
+                    wi = int(cut_wd_raw)
+                    if 0 <= wi <= 6:
+                        cut_weekday = wi
+                except (TypeError, ValueError):
+                    pass
+            cut_nth_raw = item.get("cut_weekday_nth")
+            cut_weekday_nth: Optional[int] = None
+            if cut_nth_raw is not None:
+                try:
+                    ni = int(cut_nth_raw)
+                    if 1 <= ni <= 4:
+                        cut_weekday_nth = ni
+                except (TypeError, ValueError):
+                    pass
+
+            if cut_mode_raw == "calendar":
+                cut_weekday = None
+                cut_weekday_nth = None
+            elif cut_mode_raw == "weekday":
+                cut_day = None
+                if cut_weekday is None or cut_weekday_nth is None or cut_weekday >= 5:
+                    cut_mode_raw = "none"
+                    cut_weekday = None
+                    cut_weekday_nth = None
+            else:
+                cut_day = None
+                cut_weekday = None
+                cut_weekday_nth = None
+
             if mode_raw == "business" and business_nth is not None:
                 out.append(
                     CreditCardBankEntry(
@@ -184,6 +303,10 @@ def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntr
                         due_mode="business",
                         due_day=None,
                         business_nth=business_nth,
+                        cut_mode=cut_mode_raw,
+                        cut_day=cut_day,
+                        cut_weekday=cut_weekday,
+                        cut_weekday_nth=cut_weekday_nth,
                     )
                 )
             else:
@@ -193,6 +316,10 @@ def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntr
                         due_mode="calendar",
                         due_day=due,
                         business_nth=None,
+                        cut_mode=cut_mode_raw,
+                        cut_day=cut_day,
+                        cut_weekday=cut_weekday,
+                        cut_weekday_nth=cut_weekday_nth,
                     )
                 )
         if len(out) >= 40:
@@ -223,26 +350,50 @@ def _normalize_credit_card_banks_for_storage(
             bn = e.business_nth
             if bn is not None and (bn < 1 or bn > 23):
                 bn = None
-            out.append(
-                {
-                    "name": name,
-                    "due_mode": "business",
-                    "due_day": None,
-                    "business_nth": bn,
-                }
-            )
+            base = {"name": name, "due_mode": "business", "due_day": None, "business_nth": bn}
         else:
             due = e.due_day
             if due is not None and (due < 1 or due > 31):
                 due = None
-            out.append(
-                {
-                    "name": name,
-                    "due_mode": "calendar",
-                    "due_day": due,
-                    "business_nth": None,
-                }
-            )
+            base = {"name": name, "due_mode": "calendar", "due_day": due, "business_nth": None}
+
+        cut_mode = str(getattr(e, "cut_mode", "none") or "none").strip().lower()
+        if cut_mode not in ("none", "calendar", "weekday"):
+            cut_mode = "none"
+        cut_day = getattr(e, "cut_day", None)
+        if cut_day is not None and (cut_day < 1 or cut_day > 31):
+            cut_day = None
+        cut_weekday = getattr(e, "cut_weekday", None)
+        if cut_weekday is not None and (cut_weekday < 0 or cut_weekday > 6):
+            cut_weekday = None
+        cut_weekday_nth = getattr(e, "cut_weekday_nth", None)
+        if cut_weekday_nth is not None and (cut_weekday_nth < 1 or cut_weekday_nth > 4):
+            cut_weekday_nth = None
+
+        if cut_mode == "calendar":
+            cut_weekday = None
+            cut_weekday_nth = None
+            _validate_cut_day(cut_day)
+        elif cut_mode == "weekday":
+            cut_day = None
+            if cut_weekday is None or cut_weekday_nth is None or cut_weekday >= 5:
+                cut_mode = "none"
+                cut_weekday = None
+                cut_weekday_nth = None
+        else:
+            cut_day = None
+            cut_weekday = None
+            cut_weekday_nth = None
+
+        base.update(
+            {
+                "cut_mode": cut_mode,
+                "cut_day": cut_day,
+                "cut_weekday": cut_weekday,
+                "cut_weekday_nth": cut_weekday_nth,
+            }
+        )
+        out.append(base)
         if len(out) >= 40:
             break
     return out
@@ -593,9 +744,19 @@ def variable_portion_for_month(e: Expense, year: int, month: int) -> float:
         return 0.0
     per = e.base_amount / n
     sy, sm = e.created_at.year, e.created_at.month
+    bank = (e.credit_card_bank or "").strip()
+    cfg = None
+    if e.user and getattr(e.user, "credit_card_banks", None):
+        cfg_map = {
+            b.name: b for b in _parse_credit_card_banks_from_stored(e.user.credit_card_banks)
+        }
+        cfg = cfg_map.get(bank)
+    cut = _cut_date_for_month(cfg, sy, sm)
+    delta_first = 1 if cut is None or e.created_at.date() <= cut else 2
+    first_y, first_m = _add_months(sy, sm, delta_first)
     for i in range(n):
-        # La primera cuota se refleja el mes siguiente a la compra.
-        y_m, m_m = _add_months(sy, sm, i + 1)
+        # La primera cuota se refleja mes+1 o mes+2 según fecha de corte; luego una por mes.
+        y_m, m_m = _add_months(first_y, first_m, i)
         if (y_m, m_m) == (year, month):
             return round(per, 2)
     return 0.0
@@ -682,6 +843,13 @@ def _credit_card_breakdown(
     session: Session, user_id: str, year: int, month: int, base_currency: str
 ) -> CreditCardBreakdown:
     expenses = session.exec(select(Expense).where(Expense.user_id == user_id)).all()
+    # Config de corte/vencimiento por banco (si existe en el usuario).
+    user = session.get(User, user_id)
+    cfg_by_name = (
+        {b.name: b for b in _parse_credit_card_banks_from_stored(user.credit_card_banks)}
+        if user and user.credit_card_banks
+        else {}
+    )
     by_bank: dict[str, List[CreditCardPurchaseLine]] = {}
     for e in expenses:
         if e.payment_method != PaymentMethod.TARJETA_CREDITO:
@@ -693,9 +861,12 @@ def _credit_card_breakdown(
         if n <= 1:
             continue
         sy, sm = e.created_at.year, e.created_at.month
+        cfg = cfg_by_name.get(bank)
+        cut = _cut_date_for_month(cfg, sy, sm)
+        delta_first = 1 if cut is None or e.created_at.date() <= cut else 2
+        first_y, first_m = _add_months(sy, sm, delta_first)
         for i in range(n):
-            # La primera cuota se refleja el mes siguiente a la compra.
-            y_m, m_m = _add_months(sy, sm, i + 1)
+            y_m, m_m = _add_months(first_y, first_m, i)
             if (y_m, m_m) != (year, month):
                 continue
             per = round(e.base_amount / n, 2)

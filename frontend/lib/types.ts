@@ -24,6 +24,14 @@ export interface CreditCardBankEntry {
   due_day: number | null;
   /** Si due_mode es business: 1.º, 2.º, … día hábil del mes. */
   business_nth: number | null;
+  /** Regla de corte (cierre) para asignar el primer vencimiento de una compra. */
+  cut_mode: "none" | "calendar" | "weekday";
+  /** Si cut_mode es calendar: día 1–31. */
+  cut_day: number | null;
+  /** Si cut_mode es weekday: día de semana (0=lun … 6=dom). Se usa lun–vie. */
+  cut_weekday: number | null;
+  /** Si cut_mode es weekday: 1..4 (ej. 2do jueves). */
+  cut_weekday_nth: number | null;
 }
 
 /** Normaliza respuestas viejas o mezcladas (solo nombre vs objeto completo). */
@@ -38,14 +46,24 @@ export function normalizeCreditCardBanks(
         due_mode: "calendar" as const,
         due_day: null,
         business_nth: null,
+        cut_mode: "none" as const,
+        cut_day: null,
+        cut_weekday: null,
+        cut_weekday_nth: null,
       };
     }
     const mode = b.due_mode === "business" ? ("business" as const) : ("calendar" as const);
+    const cutMode =
+      b.cut_mode === "calendar" || b.cut_mode === "weekday" ? b.cut_mode : ("none" as const);
     return {
       name: b.name,
       due_mode: mode,
       due_day: b.due_day ?? null,
       business_nth: b.business_nth ?? null,
+      cut_mode: cutMode,
+      cut_day: cutMode === "calendar" ? (b.cut_day ?? null) : null,
+      cut_weekday: cutMode === "weekday" ? (b.cut_weekday ?? null) : null,
+      cut_weekday_nth: cutMode === "weekday" ? (b.cut_weekday_nth ?? null) : null,
     };
   });
 }

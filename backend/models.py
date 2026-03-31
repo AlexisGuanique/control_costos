@@ -46,6 +46,23 @@ class CreditCardBankEntry(SQLModel):
         le=23,
         description="N-ésimo día hábil (lun–vie) del mes.",
     )
+    cut_mode: str = Field(
+        default="none",
+        description='"none" (sin corte), "calendar" (día del mes) o "weekday" (N-ésimo día de semana hábil).',
+    )
+    cut_day: Optional[int] = Field(default=None, ge=1, le=31)
+    cut_weekday: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=6,
+        description="Día de semana (0=lunes ... 6=domingo). Para 'weekday' se recomienda lun–vie.",
+    )
+    cut_weekday_nth: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=5,
+        description="N-ésima ocurrencia del día de semana en el mes (1..5).",
+    )
 
 
 class User(SQLModel, table=True):

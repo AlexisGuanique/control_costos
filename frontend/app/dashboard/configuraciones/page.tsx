@@ -10,6 +10,7 @@ import { updateMe } from "@/lib/api";
 import { useUser } from "@/lib/UserContext";
 import { normalizeCreditCardBanks, type CreditCardBankEntry } from "@/lib/types";
 import NthBusinessDaySelect from "@/components/NthBusinessDaySelect";
+import CutoffWeekdayPicker from "@/components/CutoffWeekdayPicker";
 
 type ToastType = "success" | "error";
 interface Toast { type: ToastType; message: string }
@@ -39,12 +40,20 @@ export default function ConfiguracionesPage() {
   const [bankDueMode, setBankDueMode] = useState<"calendar" | "business">("business");
   const [bankCalendarDay, setBankCalendarDay] = useState("");
   const [bankBusinessNth, setBankBusinessNth] = useState("10");
+  const [bankCutMode, setBankCutMode] = useState<"none" | "calendar" | "weekday">("none");
+  const [bankCutDay, setBankCutDay] = useState("");
+  const [bankCutWeekday, setBankCutWeekday] = useState("");
+  const [bankCutNth, setBankCutNth] = useState("");
   const [savingBanks, setSavingBanks] = useState(false);
 
   const [editBank, setEditBank] = useState<CreditCardBankEntry | null>(null);
   const [editDueMode, setEditDueMode] = useState<"calendar" | "business">("business");
   const [editCalendarDay, setEditCalendarDay] = useState("");
   const [editBusinessNth, setEditBusinessNth] = useState("10");
+  const [editCutMode, setEditCutMode] = useState<"none" | "calendar" | "weekday">("none");
+  const [editCutDay, setEditCutDay] = useState("");
+  const [editCutWeekday, setEditCutWeekday] = useState("");
+  const [editCutNth, setEditCutNth] = useState("");
 
   const creditBanks = normalizeCreditCardBanks(user?.credit_card_banks ?? []);
 
@@ -118,7 +127,49 @@ export default function ConfiguracionesPage() {
       }
       business_nth = n;
     }
-    const newEntry: CreditCardBankEntry = { name, due_mode, due_day, business_nth };
+    const cut_mode = bankCutMode;
+    let cut_day: number | null = null;
+    let cut_weekday: number | null = null;
+    let cut_weekday_nth: number | null = null;
+    if (cut_mode === "calendar") {
+      const raw = bankCutDay.trim();
+      if (raw) {
+        const d = parseInt(raw, 10);
+        if (Number.isNaN(d) || d < 1 || d > 31) {
+          showToast("error", "Día de corte: usá un número entre 1 y 31.");
+          return;
+        }
+        cut_day = d;
+      } else {
+        showToast("error", "Indicá el día de corte (1–31).");
+        return;
+      }
+    } else if (cut_mode === "weekday") {
+      const nthRaw = bankCutNth.trim();
+      const wdRaw = bankCutWeekday.trim();
+      const n = parseInt(nthRaw, 10);
+      const wd = parseInt(wdRaw, 10);
+      if (Number.isNaN(n) || n < 1 || n > 4) {
+        showToast("error", "Corte: elegí 1º a 4º.");
+        return;
+      }
+      if (Number.isNaN(wd) || wd < 0 || wd > 4) {
+        showToast("error", "Corte: elegí un día hábil (lun–vie).");
+        return;
+      }
+      cut_weekday_nth = n;
+      cut_weekday = wd;
+    }
+    const newEntry: CreditCardBankEntry = {
+      name,
+      due_mode,
+      due_day,
+      business_nth,
+      cut_mode,
+      cut_day,
+      cut_weekday,
+      cut_weekday_nth,
+    };
     setSavingBanks(true);
     try {
       const updated = await updateMe({ credit_card_banks: [...creditBanks, newEntry] });
@@ -127,6 +178,10 @@ export default function ConfiguracionesPage() {
       setBankCalendarDay("");
       setBankBusinessNth("10");
       setBankDueMode("business");
+      setBankCutMode("none");
+      setBankCutDay("");
+      setBankCutWeekday("");
+      setBankCutNth("");
       showToast("success", "Banco agregado.");
     } catch (err: unknown) {
       showToast("error", err instanceof Error ? err.message : "Error al guardar");
@@ -155,6 +210,10 @@ export default function ConfiguracionesPage() {
     setEditDueMode(b.due_mode === "calendar" ? "calendar" : "business");
     setEditCalendarDay(b.due_day != null ? String(b.due_day) : "");
     setEditBusinessNth(b.business_nth != null ? String(b.business_nth) : "10");
+    setEditCutMode(b.cut_mode ?? "none");
+    setEditCutDay(b.cut_day != null ? String(b.cut_day) : "");
+    setEditCutWeekday(b.cut_weekday != null ? String(b.cut_weekday) : "");
+    setEditCutNth(b.cut_weekday_nth != null ? String(b.cut_weekday_nth) : "");
   }
 
   function closeEditBank() {
@@ -186,11 +245,47 @@ export default function ConfiguracionesPage() {
       }
       business_nth = n;
     }
+    const cut_mode = editCutMode;
+    let cut_day: number | null = null;
+    let cut_weekday: number | null = null;
+    let cut_weekday_nth: number | null = null;
+    if (cut_mode === "calendar") {
+      const raw = editCutDay.trim();
+      if (!raw) {
+        showToast("error", "Indicá el día de corte (1–31).");
+        return;
+      }
+      const d = parseInt(raw, 10);
+      if (Number.isNaN(d) || d < 1 || d > 31) {
+        showToast("error", "Día de corte: entre 1 y 31.");
+        return;
+      }
+      cut_day = d;
+    } else if (cut_mode === "weekday") {
+      const nthRaw = editCutNth.trim();
+      const wdRaw = editCutWeekday.trim();
+      const n = parseInt(nthRaw, 10);
+      const wd = parseInt(wdRaw, 10);
+      if (Number.isNaN(n) || n < 1 || n > 4) {
+        showToast("error", "Corte: elegí 1º a 4º.");
+        return;
+      }
+      if (Number.isNaN(wd) || wd < 0 || wd > 4) {
+        showToast("error", "Corte: elegí un día hábil (lun–vie).");
+        return;
+      }
+      cut_weekday_nth = n;
+      cut_weekday = wd;
+    }
     const updatedEntry: CreditCardBankEntry = {
       name: editBank.name,
       due_mode,
       due_day,
       business_nth,
+      cut_mode,
+      cut_day,
+      cut_weekday,
+      cut_weekday_nth,
     };
     setSavingBanks(true);
     try {
@@ -390,6 +485,48 @@ export default function ConfiguracionesPage() {
                 />
               )}
             </div>
+            <div className="min-w-0 sm:col-span-3">
+              <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="cc-cut-mode">
+                Fecha de corte (cierre)
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] gap-2 items-center">
+                <select
+                  id="cc-cut-mode"
+                  value={bankCutMode}
+                  onChange={(e) => setBankCutMode(e.target.value as "none" | "calendar" | "weekday")}
+                  className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                >
+                  <option value="none">Sin corte (legacy)</option>
+                  <option value="weekday">N-ésimo día de semana hábil (ej. 2º jueves)</option>
+                  <option value="calendar">Día fijo del mes (1–31)</option>
+                </select>
+                {bankCutMode === "weekday" ? (
+                  <CutoffWeekdayPicker
+                    weekday={bankCutWeekday}
+                    nth={bankCutNth}
+                    onWeekdayChange={setBankCutWeekday}
+                    onNthChange={setBankCutNth}
+                    ids={{ weekday: "cc-cut-weekday", nth: "cc-cut-nth" }}
+                  />
+                ) : bankCutMode === "calendar" ? (
+                  <input
+                    id="cc-cut-day"
+                    type="number"
+                    min={1}
+                    max={31}
+                    inputMode="numeric"
+                    value={bankCutDay}
+                    onChange={(e) => setBankCutDay(e.target.value)}
+                    placeholder="Ej: 19"
+                    className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                  />
+                ) : (
+                  <div className="h-11 flex items-center px-4 text-sm text-slate-400 bg-slate-700/30 border border-slate-700 rounded-xl">
+                    La cuota 1 vence el mes siguiente a la compra
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="flex sm:justify-end sm:pb-0">
               <SaveButton loading={savingBanks} label="Agregar banco" />
             </div>
@@ -415,6 +552,14 @@ export default function ConfiguracionesPage() {
                       : b.due_day != null
                         ? `Resumen el día ${b.due_day} del mes`
                         : "Sin fecha de resumen"}
+                    {" · "}
+                    {b.cut_mode === "weekday" && b.cut_weekday_nth != null && b.cut_weekday != null
+                      ? `Corte: ${b.cut_weekday_nth}º ${
+                          ["lunes", "martes", "miércoles", "jueves", "viernes"][b.cut_weekday] ?? "día"
+                        } hábil`
+                      : b.cut_mode === "calendar" && b.cut_day != null
+                        ? `Corte: día ${b.cut_day}`
+                        : "Corte: sin corte"}
                   </p>
                 </div>
                 <button
@@ -515,6 +660,48 @@ export default function ConfiguracionesPage() {
                         className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
                       />
                     )}
+                  </div>
+                  <div className="min-w-0 sm:col-span-2">
+                    <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="edit-cc-cut-mode">
+                      Fecha de corte (cierre)
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] gap-2 items-center">
+                      <select
+                        id="edit-cc-cut-mode"
+                        value={editCutMode}
+                        onChange={(e) => setEditCutMode(e.target.value as "none" | "calendar" | "weekday")}
+                        className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                      >
+                        <option value="none">Sin corte (legacy)</option>
+                        <option value="weekday">N-ésimo día de semana hábil (ej. 2º jueves)</option>
+                        <option value="calendar">Día fijo del mes (1–31)</option>
+                      </select>
+                      {editCutMode === "weekday" ? (
+                        <CutoffWeekdayPicker
+                          weekday={editCutWeekday}
+                          nth={editCutNth}
+                          onWeekdayChange={setEditCutWeekday}
+                          onNthChange={setEditCutNth}
+                          ids={{ weekday: "edit-cc-cut-weekday", nth: "edit-cc-cut-nth" }}
+                        />
+                      ) : editCutMode === "calendar" ? (
+                        <input
+                          id="edit-cc-cut-day"
+                          type="number"
+                          min={1}
+                          max={31}
+                          inputMode="numeric"
+                          value={editCutDay}
+                          onChange={(e) => setEditCutDay(e.target.value)}
+                          placeholder="Ej: 19"
+                          className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                        />
+                      ) : (
+                        <div className="h-11 flex items-center px-4 text-sm text-slate-400 bg-slate-700/30 border border-slate-700 rounded-xl">
+                          La cuota 1 vence el mes siguiente a la compra
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
