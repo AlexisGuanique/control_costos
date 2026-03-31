@@ -5,6 +5,7 @@ import type {
   BudgetSummary,
   CreditCardBreakdown,
   CreditCardCutoffOverride,
+  CreditCardOverviewResponse,
   CreditCardPeriodPaidBody,
   DollarRate,
   Expense,
@@ -208,6 +209,13 @@ export async function getBudgetSummary(year: number, month: number): Promise<Bud
   return handleResponse<BudgetSummary>(res);
 }
 
+export async function getCreditCardOverview(): Promise<CreditCardOverviewResponse> {
+  const res = await fetch(`${API_URL}/finances/credit-cards/overview`, {
+    headers: authHeaders(),
+  });
+  return handleResponse<CreditCardOverviewResponse>(res);
+}
+
 export async function getCreditCardBreakdown(
   year: number,
   month: number
@@ -340,6 +348,31 @@ export async function deleteFixedExpense(id: number): Promise<void> {
     headers: authHeaders(),
   });
   return handleResponse<void>(res);
+}
+
+export async function upsertFixedExpenseAmountOverride(
+  id: number,
+  body: { year: number; month: number; amount: number; amount_currency?: string }
+): Promise<FixedExpense> {
+  const res = await fetch(`${API_URL}/finances/fixed-expenses/${id}/amount-override`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  return handleResponse<FixedExpense>(res);
+}
+
+export async function deleteFixedExpenseAmountOverride(
+  id: number,
+  year: number,
+  month: number
+): Promise<FixedExpense> {
+  const params = new URLSearchParams({ year: String(year), month: String(month) });
+  const res = await fetch(
+    `${API_URL}/finances/fixed-expenses/${id}/amount-override?${params}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  return handleResponse<FixedExpense>(res);
 }
 
 export async function listExtraIncome(year: number, month: number): Promise<ExtraIncome[]> {

@@ -210,6 +210,41 @@ export interface CreditCardBreakdown {
   banks: CreditCardBankDetail[];
 }
 
+// ─── Overview global de tarjetas ──────────────────────────────────────────────
+
+export interface CreditCardOverviewMonthEntry {
+  year: number;
+  month: number;
+  amount: number;
+  paid: boolean;
+}
+
+export interface CreditCardOverviewPurchase {
+  expense_id: number;
+  description: string;
+  purchase_date: string;
+  total_base: number;
+  installments: number;
+  amount_per_installment: number;
+  first_installment_year: number;
+  first_installment_month: number;
+  installments_remaining: number;
+  amount_remaining: number;
+}
+
+export interface CreditCardBankOverview {
+  bank: string;
+  total_paid: number;
+  total_remaining: number;
+  months: CreditCardOverviewMonthEntry[];
+  active_purchases: CreditCardOverviewPurchase[];
+}
+
+export interface CreditCardOverviewResponse {
+  base_currency: string;
+  banks: CreditCardBankOverview[];
+}
+
 export interface MonthlyBudgetUpsert {
   year: number;
   month: number;
@@ -233,6 +268,10 @@ export interface FixedExpense {
   created_at: string;
   /** Si year+month se envían al listar, indica si está pagado en ese mes */
   paid_this_period: boolean;
+  /** Monto sobrescrito para el mes solicitado (null = usa el monto base) */
+  override_amount?: number | null;
+  override_original_amount?: number | null;
+  override_original_currency?: string | null;
 }
 
 export interface FixedExpenseCreate {

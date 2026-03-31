@@ -9,6 +9,7 @@ import {
   Plus,
   Receipt,
   RefreshCw,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
@@ -23,6 +24,8 @@ import {
   createFixedExpense,
   updateFixedExpense,
   setFixedExpensePaidPeriod,
+  upsertFixedExpenseAmountOverride,
+  deleteFixedExpenseAmountOverride,
   setCreditCardPeriodPaid,
   deleteFixedExpense,
   listExtraIncome,
@@ -218,6 +221,12 @@ export default function FinanzasPage() {
 
   const [fixedListFilter, setFixedListFilter] = useState<"all" | "paid" | "overdue">("all");
 
+  // Override de monto mensual para gastos fijos variables
+  const [overrideTarget, setOverrideTarget] = useState<FixedExpense | null>(null);
+  const [overrideAmount, setOverrideAmount] = useState("");
+  const [overrideCurrency, setOverrideCurrency] = useState<"USD" | "ARS" | "EUR">("ARS");
+  const [savingOverride, setSavingOverride] = useState(false);
+
   const [extraDesc, setExtraDesc] = useState("");
   const [extraAmount, setExtraAmount] = useState("");
   const [extraCurrency, setExtraCurrency] = useState<"USD" | "ARS" | "EUR">("USD");
@@ -257,8 +266,9 @@ export default function FinanzasPage() {
     const active = fixedList.filter((f) => f.is_active);
     const paid = active.filter((f) => f.paid_this_period);
     const unpaid = active.filter((f) => !f.paid_this_period);
-    let totalPaid = paid.reduce((s, f) => s + f.amount, 0);
-    let totalUnpaid = unpaid.reduce((s, f) => s + f.amount, 0);
+    const effectiveAmount = (f: FixedExpense) => f.override_amount ?? f.amount;
+    let totalPaid = paid.reduce((s, f) => s + effectiveAmount(f), 0);
+    let totalUnpaid = unpaid.reduce((s, f) => s + effectiveAmount(f), 0);
     const cc = summary?.credit_card_monthly_by_bank ?? [];
     for (const row of cc) {
       if (row.paid ?? false) totalPaid += row.amount;
@@ -508,6 +518,73 @@ export default function FinanzasPage() {
       setFormError(err instanceof Error ? err.message : "Error al guardar");
     } finally {
       setSavingFixedEdit(false);
+    }
+  }
+
+  function openOverrideModal(f: FixedExpense) {
+    setOverrideTarget(f);
+    // Pre-llenar con el override existente o el monto base del gasto fijo
+    if (f.override_amount != null && f.override_original_currency) {
+      setOverrideAmount(
+        f.override_original_amount != null
+          ? String(f.override_original_amount)
+          : String(f.override_amount)
+      );
+      setOverrideCurrency(
+        (f.override_original_currency as "USD" | "ARS" | "EUR") ?? "ARS"
+      );
+    } else {
+      setOverrideAmount(
+        f.original_amount != null && f.original_currency
+          ? String(f.original_amount)
+          : String(f.amount)
+      );
+      setOverrideCurrency(
+        (f.original_currency as "USD" | "ARS" | "EUR" | null | undefined) ??
+          (baseCurrency === "USD" || baseCurrency === "EUR" || baseCurrency === "ARS"
+            ? baseCurrency
+            : "ARS")
+      );
+    }
+  }
+
+  async function handleSaveOverride(e: React.FormEvent) {
+    e.preventDefault();
+    if (!overrideTarget) return;
+    setFormError(null);
+    const amt = parseFloat(overrideAmount.replace(",", "."));
+    if (isNaN(amt) || amt < 0) {
+      setFormError("Ingresá un monto válido.");
+      return;
+    }
+    setSavingOverride(true);
+    try {
+      await upsertFixedExpenseAmountOverride(overrideTarget.id, {
+        year: periodYear,
+        month: periodMonth,
+        amount: amt,
+        amount_currency: overrideCurrency,
+      });
+      setOverrideTarget(null);
+      await loadData();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Error al guardar");
+    } finally {
+      setSavingOverride(false);
+    }
+  }
+
+  async function handleDeleteOverride() {
+    if (!overrideTarget) return;
+    setSavingOverride(true);
+    try {
+      await deleteFixedExpenseAmountOverride(overrideTarget.id, periodYear, periodMonth);
+      setOverrideTarget(null);
+      await loadData();
+    } catch {
+      /* ignore */
+    } finally {
+      setSavingOverride(false);
     }
   }
 
@@ -1232,15 +1309,55 @@ export default function FinanzasPage() {
                           paidRow ? "text-emerald-200/90" : "text-slate-300"
                         }`}
                       >
-                        <span className="block">{formatCurrency(f.amount, baseCurrency)}</span>
-                        {f.original_currency &&
-                          f.original_amount != null &&
-                          f.original_currency !== baseCurrency && (
-                            <span className="block text-[10px] font-normal text-slate-500">
-                              ({formatCurrency(f.original_amount, f.original_currency)})
+                        {f.override_amount != null ? (
+                          <>
+                            <span
+                              className="block font-medium text-amber-300"
+                              title="Monto personalizado para este mes"
+                            >
+                              {formatCurrency(f.override_amount, baseCurrency)}
                             </span>
-                          )}
+                            {f.override_original_currency &&
+                              f.override_original_amount != null &&
+                              f.override_original_currency !== baseCurrency && (
+                                <span className="block text-[10px] font-normal text-amber-400/70">
+                                  ({formatCurrency(f.override_original_amount, f.override_original_currency)})
+                                </span>
+                              )}
+                            <span className="block text-[10px] font-normal text-slate-500 line-through">
+                              {formatCurrency(f.amount, baseCurrency)}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="block">{formatCurrency(f.amount, baseCurrency)}</span>
+                            {f.original_currency &&
+                              f.original_amount != null &&
+                              f.original_currency !== baseCurrency && (
+                                <span className="block text-[10px] font-normal text-slate-500">
+                                  ({formatCurrency(f.original_amount, f.original_currency)})
+                                </span>
+                              )}
+                          </>
+                        )}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => openOverrideModal(f)}
+                        className={`shrink-0 p-1.5 transition ${
+                          f.override_amount != null
+                            ? "text-amber-400 hover:text-amber-300"
+                            : "text-slate-400 hover:text-amber-400"
+                        }`}
+                        title={
+                          f.override_amount != null
+                            ? "Modificar monto de este mes"
+                            : "Ajustar monto solo para este mes"
+                        }
+                        aria-label="Ajustar monto para este mes"
+                      >
+                        <SlidersHorizontal className="h-4 w-4" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -1478,6 +1595,103 @@ export default function FinanzasPage() {
                   className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
                 >
                   {savingFixedEdit ? "Guardando…" : "Guardar"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {overrideTarget && (
+        <div className="fixed inset-0 z-[95] flex items-end justify-center sm:items-center sm:p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
+            aria-label="Cerrar"
+            onClick={() => !savingOverride && setOverrideTarget(null)}
+          />
+          <div
+            className="relative z-10 flex max-h-[min(480px,90dvh)] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-slate-800 bg-[#1e293b] shadow-2xl sm:rounded-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="override-modal-title"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-800/80 px-4 py-3">
+              <div className="min-w-0">
+                <h2 id="override-modal-title" className="text-base font-semibold text-white">
+                  Monto para este mes
+                </h2>
+                <p className="mt-0.5 truncate text-xs text-slate-400">
+                  {overrideTarget.name} · {new Date(periodYear, periodMonth - 1).toLocaleString("es-AR", { month: "long", year: "numeric" })}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={savingOverride}
+                onClick={() => setOverrideTarget(null)}
+                className="rounded-lg p-1.5 text-slate-300 transition hover:bg-slate-800 hover:text-white disabled:opacity-50"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form
+              onSubmit={handleSaveOverride}
+              className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5"
+            >
+              <p className="text-xs text-slate-400">
+                Modificá el monto <span className="font-medium text-white">solo para este mes</span> sin afectar los demás meses.
+                El monto base del gasto fijo queda igual.
+              </p>
+              <div>
+                <label htmlFor="override-amt" className="mb-1.5 block text-xs font-medium text-slate-300">
+                  Monto de este mes (se convierte a {baseCurrency})
+                </label>
+                <div className="mb-2">
+                  <CurrencyToggle3 value={overrideCurrency} onChange={setOverrideCurrency} compact />
+                </div>
+                <input
+                  id="override-amt"
+                  type="text"
+                  inputMode="decimal"
+                  autoFocus
+                  value={overrideAmount}
+                  onChange={(e) => setOverrideAmount(e.target.value)}
+                  className="w-full rounded-xl border border-slate-600 bg-slate-800/80 px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                  required
+                  placeholder={`Monto en ${overrideCurrency}`}
+                />
+              </div>
+              {formError && (
+                <p className="rounded-lg bg-red-900/40 px-3 py-2 text-xs text-red-300">{formError}</p>
+              )}
+              <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-between">
+                <div className="flex gap-2">
+                  {overrideTarget.override_amount != null && (
+                    <button
+                      type="button"
+                      disabled={savingOverride}
+                      onClick={handleDeleteOverride}
+                      className="rounded-xl border border-slate-600 px-3 py-2.5 text-xs font-medium text-red-400 hover:bg-red-900/20 disabled:opacity-50"
+                    >
+                      Restablecer monto base
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={savingOverride}
+                    onClick={() => setOverrideTarget(null)}
+                    className="rounded-xl border border-slate-600 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+                <button
+                  type="submit"
+                  disabled={savingOverride}
+                  className="rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-50"
+                >
+                  {savingOverride ? "Guardando…" : "Guardar para este mes"}
                 </button>
               </div>
             </form>

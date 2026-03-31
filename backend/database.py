@@ -216,6 +216,35 @@ def _sqlite_patch_expense_category_enum_legacy() -> None:
         return
 
 
+def _sqlite_create_fixedexpenseamountoverride() -> None:
+    """Crea la tabla fixedexpenseamountoverride en bases SQLite pre-existentes."""
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+            tables = {row[0] for row in r}
+            if "fixedexpenseamountoverride" not in tables:
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE fixedexpenseamountoverride (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            fixed_expense_id INTEGER NOT NULL REFERENCES fixedexpense(id),
+                            year INTEGER NOT NULL,
+                            month INTEGER NOT NULL,
+                            amount REAL NOT NULL,
+                            original_amount REAL,
+                            original_currency VARCHAR(8),
+                            exchange_rate_used REAL,
+                            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE (fixed_expense_id, year, month)
+                        )
+                        """
+                    )
+                )
+    except Exception:
+        return
+
+
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
     _sqlite_patch_monthlybudget_columns()
@@ -227,6 +256,7 @@ def create_db_and_tables() -> None:
     _sqlite_patch_extraincome_fx_cols()
     _sqlite_patch_expense_credit_installments()
     _sqlite_patch_expense_category_enum_legacy()
+    _sqlite_create_fixedexpenseamountoverride()
 
 
 def get_session() -> Generator[Session, None, None]:

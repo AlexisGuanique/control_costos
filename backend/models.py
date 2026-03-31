@@ -284,6 +284,34 @@ class FixedExpense(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class FixedExpenseAmountOverride(SQLModel, table=True):
+    """
+    Override del monto de un gasto fijo para un mes concreto.
+    El monto base del gasto fijo (FixedExpense.amount) no cambia;
+    solo se usa este valor para el mes indicado.
+    """
+
+    __tablename__ = "fixedexpenseamountoverride"
+    __table_args__ = (
+        UniqueConstraint(
+            "fixed_expense_id",
+            "year",
+            "month",
+            name="uq_fixedexpenseamountoverride_period",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fixed_expense_id: int = Field(foreign_key="fixedexpense.id", index=True)
+    year: int
+    month: int
+    amount: float = Field(description="Monto en moneda base para este mes.")
+    original_amount: Optional[float] = Field(default=None)
+    original_currency: Optional[str] = Field(default=None, max_length=8)
+    exchange_rate_used: Optional[float] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class FixedExpensePeriodPayment(SQLModel, table=True):
     """Marca un gasto fijo como pagado en un mes calendario concreto."""
 
@@ -402,6 +430,10 @@ class FixedExpenseRead(SQLModel):
     due_day: Optional[int] = None
     created_at: datetime
     paid_this_period: bool = False
+    # Monto sobrescrito para el mes solicitado (None = usa el monto base).
+    override_amount: Optional[float] = None
+    override_original_amount: Optional[float] = None
+    override_original_currency: Optional[str] = None
 
 
 class FixedExpensePeriodPaidBody(SQLModel):
@@ -492,6 +524,44 @@ class CreditCardBreakdown(SQLModel):
     month: int
     base_currency: str
     banks: List[CreditCardBankDetail] = Field(default_factory=list)
+
+
+# ─── Vista global de tarjetas (overview) ─────────────────────────────────────
+
+class CreditCardOverviewMonthEntry(SQLModel):
+    """Importe de una tarjeta para un mes concreto y si fue pagado."""
+    year: int
+    month: int
+    amount: float
+    paid: bool
+
+
+class CreditCardOverviewPurchase(SQLModel):
+    """Compra activa: todavía tiene cuotas en meses no pagados."""
+    expense_id: int
+    description: str
+    purchase_date: datetime
+    total_base: float
+    installments: int
+    amount_per_installment: float
+    first_installment_year: int
+    first_installment_month: int
+    # cuotas que caen en meses aún no pagados (incluyendo el mes actual si no está pagado)
+    installments_remaining: int
+    amount_remaining: float
+
+
+class CreditCardBankOverview(SQLModel):
+    bank: str
+    total_paid: float          # suma de meses marcados como pagados
+    total_remaining: float     # suma de meses sin pagar (pasados + presentes + futuros)
+    months: List[CreditCardOverviewMonthEntry] = Field(default_factory=list)
+    active_purchases: List[CreditCardOverviewPurchase] = Field(default_factory=list)
+
+
+class CreditCardOverviewResponse(SQLModel):
+    base_currency: str
+    banks: List[CreditCardBankOverview] = Field(default_factory=list)
 
 
 class BudgetSummary(SQLModel):

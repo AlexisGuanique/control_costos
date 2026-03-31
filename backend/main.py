@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func
-from sqlmodel import Session, select
+from sqlmodel import Field, Session, SQLModel, select
 
 from ai_service import ai_service
 from auth import (
@@ -38,6 +38,10 @@ from models import (
     CreditCardBankDetail,
     CreditCardBankMonthRow,
     CreditCardBreakdown,
+    CreditCardBankOverview,
+    CreditCardOverviewMonthEntry,
+    CreditCardOverviewPurchase,
+    CreditCardOverviewResponse,
     CreditCardCutoffOverride,
     CreditCardCutoffOverrideRead,
     CreditCardCutoffUpsertBody,
@@ -56,6 +60,7 @@ from models import (
     ExtraIncomeCreate,
     ExtraIncomeRead,
     FixedExpense,
+    FixedExpenseAmountOverride,
     FixedExpenseCreate,
     FixedExpensePeriodPaidBody,
     FixedExpensePeriodPayment,
@@ -742,7 +747,11 @@ def _normalize_amount_currency(currency: str) -> str:
     return c
 
 
-def _fixed_expense_read(row: FixedExpense, paid_this_period: bool) -> FixedExpenseRead:
+def _fixed_expense_read(
+    row: FixedExpense,
+    paid_this_period: bool,
+    override: Optional["FixedExpenseAmountOverride"] = None,
+) -> FixedExpenseRead:
     return FixedExpenseRead(
         id=row.id,
         user_id=row.user_id,
@@ -755,7 +764,37 @@ def _fixed_expense_read(row: FixedExpense, paid_this_period: bool) -> FixedExpen
         due_day=row.due_day,
         created_at=row.created_at,
         paid_this_period=paid_this_period,
+        override_amount=override.amount if override else None,
+        override_original_amount=override.original_amount if override else None,
+        override_original_currency=override.original_currency if override else None,
     )
+
+
+def _fixed_amount_for_period(
+    row: FixedExpense,
+    override: Optional["FixedExpenseAmountOverride"],
+) -> float:
+    """Retorna el monto efectivo del gasto fijo para el período (base currency)."""
+    return override.amount if override else row.amount
+
+
+def _fixed_overrides_map(
+    session: Session,
+    user_id: str,
+    year: int,
+    month: int,
+) -> dict[int, "FixedExpenseAmountOverride"]:
+    """Retorna {fixed_expense_id: override} para el período dado."""
+    rows = session.exec(
+        select(FixedExpenseAmountOverride)
+        .join(FixedExpense, FixedExpenseAmountOverride.fixed_expense_id == FixedExpense.id)
+        .where(
+            FixedExpense.user_id == user_id,
+            FixedExpenseAmountOverride.year == year,
+            FixedExpenseAmountOverride.month == month,
+        )
+    ).all()
+    return {r.fixed_expense_id: r for r in rows}
 
 
 def _fixed_is_overdue_in_period(
@@ -1579,8 +1618,13 @@ def get_budget_summary(
         )
     ).all()
     paid_ids = _paid_fixed_expense_ids(session, current_user.id, year, month)
+    fixed_overrides = _fixed_overrides_map(session, current_user.id, year, month)
     total_fixed = round(
-        sum(f.amount for f in fixed_active if f.id in paid_ids),
+        sum(
+            _fixed_amount_for_period(f, fixed_overrides.get(f.id))
+            for f in fixed_active
+            if f.id in paid_ids
+        ),
         2,
     )
 
@@ -1654,6 +1698,115 @@ def get_credit_card_breakdown(
     _validate_year_month(year, month)
     return _credit_card_breakdown(
         session, current_user.id, year, month, current_user.base_currency
+    )
+
+
+@app.get("/finances/credit-cards/overview", response_model=CreditCardOverviewResponse)
+def get_credit_card_overview(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> CreditCardOverviewResponse:
+    """
+    Vista global de tarjetas: por banco, suma pagada y restante (todos los meses),
+    desglose mensual y compras activas con cuotas pendientes.
+    """
+    today = date.today()
+    today_ym = (today.year, today.month)
+
+    expenses = session.exec(select(Expense).where(Expense.user_id == current_user.id)).all()
+    cutoff_overrides = _cc_cutoff_overrides_map(session, current_user.id)
+
+    # {bank: {(y,m): amount}}
+    by_bank_months: dict[str, dict[tuple[int, int], float]] = {}
+    # {bank: [purchase_info]}
+    by_bank_purchases: dict[str, list[dict]] = {}
+
+    for e in expenses:
+        if e.payment_method != PaymentMethod.TARJETA_CREDITO:
+            continue
+        bank = (e.credit_card_bank or "").strip()
+        if not bank:
+            continue
+        n = max(1, int(e.credit_installments or 1))
+        first_y, first_m = _cc_first_installment_start_month(e, cutoff_overrides=cutoff_overrides)
+        per = round(e.base_amount / n, 2)
+
+        if bank not in by_bank_months:
+            by_bank_months[bank] = {}
+            by_bank_purchases[bank] = []
+
+        # Acumular monto por mes
+        for i in range(n):
+            ym = _add_months(first_y, first_m, i)
+            amt = e.base_amount if n == 1 else per
+            by_bank_months[bank][ym] = round(by_bank_months[bank].get(ym, 0.0) + amt, 2)
+
+        # Cuotas restantes = instalments cuyos meses >= hoy
+        remaining_count = sum(
+            1 for i in range(n)
+            if _add_months(first_y, first_m, i) >= today_ym
+        )
+        amount_remaining = round(remaining_count * per, 2)
+
+        by_bank_purchases[bank].append({
+            "expense_id": e.id,
+            "description": e.description,
+            "purchase_date": e.created_at,
+            "total_base": round(e.base_amount, 2),
+            "installments": n,
+            "amount_per_installment": per,
+            "first_installment_year": first_y,
+            "first_installment_month": first_m,
+            "installments_remaining": remaining_count,
+            "amount_remaining": amount_remaining,
+        })
+
+    # Mapa de meses pagados: {(bank, y, m)}
+    paid_records = session.exec(
+        select(CreditCardPeriodPaid).where(
+            CreditCardPeriodPaid.user_id == current_user.id,
+            CreditCardPeriodPaid.paid == True,  # noqa: E712
+        )
+    ).all()
+    paid_set: set[tuple[str, int, int]] = {(r.bank, r.year, r.month) for r in paid_records}
+
+    banks_out: list[CreditCardBankOverview] = []
+    for bank in sorted(by_bank_months.keys(), key=lambda x: x.lower()):
+        months_list: list[CreditCardOverviewMonthEntry] = []
+        total_paid = 0.0
+        total_remaining = 0.0
+
+        for (y, m), amt in sorted(by_bank_months[bank].items()):
+            is_paid = (bank, y, m) in paid_set
+            months_list.append(
+                CreditCardOverviewMonthEntry(year=y, month=m, amount=amt, paid=is_paid)
+            )
+            if is_paid:
+                total_paid += amt
+            else:
+                total_remaining += amt
+
+        # Solo incluir compras activas (con cuotas en meses >= hoy)
+        active = [
+            CreditCardOverviewPurchase(**p)
+            for p in by_bank_purchases[bank]
+            if p["installments_remaining"] > 0
+        ]
+        active.sort(key=lambda p: p.purchase_date, reverse=True)
+
+        banks_out.append(
+            CreditCardBankOverview(
+                bank=bank,
+                total_paid=round(total_paid, 2),
+                total_remaining=round(total_remaining, 2),
+                months=months_list,
+                active_purchases=active,
+            )
+        )
+
+    return CreditCardOverviewResponse(
+        base_currency=current_user.base_currency,
+        banks=banks_out,
     )
 
 
@@ -1938,8 +2091,16 @@ def list_fixed_expenses(
             if _fixed_is_overdue_in_period(r, r.id in paid_ids, year, month)
         ]
 
+    overrides: dict[int, FixedExpenseAmountOverride] = {}
+    if year is not None and month is not None:
+        overrides = _fixed_overrides_map(session, current_user.id, year, month)
+
     return [
-        _fixed_expense_read(r, r.id in paid_ids if year is not None else False)
+        _fixed_expense_read(
+            r,
+            r.id in paid_ids if year is not None else False,
+            overrides.get(r.id) if overrides else None,
+        )
         for r in rows
     ]
 
@@ -2110,8 +2271,111 @@ def delete_fixed_expense(
         )
     ).all():
         session.delete(p)
+    for ov in session.exec(
+        select(FixedExpenseAmountOverride).where(
+            FixedExpenseAmountOverride.fixed_expense_id == fixed_id
+        )
+    ).all():
+        session.delete(ov)
     session.delete(row)
     session.commit()
+
+
+class _FixedOverrideBody(SQLModel):
+    year: int = Field(ge=2000, le=2100)
+    month: int = Field(ge=1, le=12)
+    amount: float
+    amount_currency: str = "ARS"
+
+
+@app.put(
+    "/finances/fixed-expenses/{fixed_id}/amount-override",
+    response_model=FixedExpenseRead,
+)
+async def upsert_fixed_expense_amount_override(
+    fixed_id: int,
+    body: _FixedOverrideBody,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> FixedExpenseRead:
+    """Crea o actualiza el monto de un gasto fijo para un mes concreto."""
+    _validate_year_month(body.year, body.month)
+    row = session.get(FixedExpense, fixed_id)
+    if not row or row.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gasto fijo no encontrado")
+    if body.amount < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El monto no puede ser negativo")
+
+    curr = _normalize_amount_currency(body.amount_currency)
+    base_amt, rate = await convert_original_to_base(
+        body.amount, curr, current_user.base_currency.upper()
+    )
+
+    existing = session.exec(
+        select(FixedExpenseAmountOverride).where(
+            FixedExpenseAmountOverride.fixed_expense_id == fixed_id,
+            FixedExpenseAmountOverride.year == body.year,
+            FixedExpenseAmountOverride.month == body.month,
+        )
+    ).first()
+
+    if existing:
+        existing.amount = base_amt
+        existing.original_amount = round(body.amount, 2)
+        existing.original_currency = curr
+        existing.exchange_rate_used = rate
+        session.add(existing)
+    else:
+        session.add(
+            FixedExpenseAmountOverride(
+                fixed_expense_id=fixed_id,
+                year=body.year,
+                month=body.month,
+                amount=base_amt,
+                original_amount=round(body.amount, 2),
+                original_currency=curr,
+                exchange_rate_used=rate,
+            )
+        )
+
+    session.commit()
+    session.refresh(row)
+
+    paid_ids = _paid_fixed_expense_ids(session, current_user.id, body.year, body.month)
+    overrides = _fixed_overrides_map(session, current_user.id, body.year, body.month)
+    return _fixed_expense_read(row, row.id in paid_ids, overrides.get(row.id))
+
+
+@app.delete(
+    "/finances/fixed-expenses/{fixed_id}/amount-override",
+    response_model=FixedExpenseRead,
+)
+def delete_fixed_expense_amount_override(
+    fixed_id: int,
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> FixedExpenseRead:
+    """Elimina el monto override de un gasto fijo para un mes concreto."""
+    _validate_year_month(year, month)
+    row = session.get(FixedExpense, fixed_id)
+    if not row or row.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gasto fijo no encontrado")
+
+    existing = session.exec(
+        select(FixedExpenseAmountOverride).where(
+            FixedExpenseAmountOverride.fixed_expense_id == fixed_id,
+            FixedExpenseAmountOverride.year == year,
+            FixedExpenseAmountOverride.month == month,
+        )
+    ).first()
+    if existing:
+        session.delete(existing)
+        session.commit()
+
+    paid_ids = _paid_fixed_expense_ids(session, current_user.id, year, month)
+    return _fixed_expense_read(row, row.id in paid_ids)
 
 
 @app.get("/finances/extra-income", response_model=List[ExtraIncomeRead])
