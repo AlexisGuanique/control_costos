@@ -46,6 +46,8 @@ export default function ConfiguracionesPage() {
   const [bankCutNth, setBankCutNth] = useState("");
   const [savingBanks, setSavingBanks] = useState(false);
 
+  const [addBankOpen, setAddBankOpen] = useState(false);
+
   const [editBank, setEditBank] = useState<CreditCardBankEntry | null>(null);
   const [editDueMode, setEditDueMode] = useState<"calendar" | "business">("business");
   const [editCalendarDay, setEditCalendarDay] = useState("");
@@ -182,12 +184,30 @@ export default function ConfiguracionesPage() {
       setBankCutDay("");
       setBankCutWeekday("");
       setBankCutNth("");
+      setAddBankOpen(false);
       showToast("success", "Banco agregado.");
     } catch (err: unknown) {
       showToast("error", err instanceof Error ? err.message : "Error al guardar");
     } finally {
       setSavingBanks(false);
     }
+  }
+
+  function openAddBank() {
+    setBankInput("");
+    setBankDueMode("business");
+    setBankCalendarDay("");
+    setBankBusinessNth("10");
+    setBankCutMode("none");
+    setBankCutDay("");
+    setBankCutWeekday("");
+    setBankCutNth("");
+    setAddBankOpen(true);
+  }
+
+  function closeAddBank() {
+    if (savingBanks) return;
+    setAddBankOpen(false);
   }
 
   async function handleRemoveBank(bankName: string) {
@@ -432,109 +452,19 @@ export default function ConfiguracionesPage() {
         <p className="text-xs text-slate-500 leading-relaxed">
           Si no cargás ninguno, podés escribir el banco a mano al cargar el gasto. Si cargás bancos acá, el gasto te pedirá elegir uno de la lista.
         </p>
-        <form onSubmit={handleAddBank} className="space-y-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_minmax(0,11rem)_auto] sm:items-end">
-            <div className="min-w-0">
-              <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="cc-bank-name">
-                Nombre del banco
-              </label>
-              <input
-                id="cc-bank-name"
-                type="text"
-                value={bankInput}
-                onChange={(e) => setBankInput(e.target.value)}
-                placeholder="Ej: Galicia, Santander…"
-                className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition"
-              />
-            </div>
-            <div className="min-w-0">
-              <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="cc-due-mode">
-                Tipo de vencimiento
-              </label>
-              <select
-                id="cc-due-mode"
-                value={bankDueMode}
-                onChange={(e) => setBankDueMode(e.target.value as "calendar" | "business")}
-                className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-              >
-                <option value="business">N-ésimo día hábil (lun–vie)</option>
-                <option value="calendar">Día fijo del calendario (1–31)</option>
-              </select>
-            </div>
-            <div className="min-w-0">
-              <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="cc-due-value">
-                {bankDueMode === "business" ? "Qué día hábil" : "Día del mes"}
-              </label>
-              {bankDueMode === "business" ? (
-                <NthBusinessDaySelect
-                  id="cc-due-value"
-                  value={bankBusinessNth}
-                  onChange={setBankBusinessNth}
-                />
-              ) : (
-                <input
-                  id="cc-due-value"
-                  type="number"
-                  min={1}
-                  max={31}
-                  inputMode="numeric"
-                  value={bankCalendarDay}
-                  onChange={(e) => setBankCalendarDay(e.target.value)}
-                  placeholder="Opcional"
-                  className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-                />
-              )}
-            </div>
-            <div className="min-w-0 sm:col-span-3">
-              <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="cc-cut-mode">
-                Fecha de corte (cierre)
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] gap-2 items-center">
-                <select
-                  id="cc-cut-mode"
-                  value={bankCutMode}
-                  onChange={(e) => setBankCutMode(e.target.value as "none" | "calendar" | "weekday")}
-                  className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-                >
-                  <option value="none">Sin corte (legacy)</option>
-                  <option value="weekday">N-ésimo día de semana hábil (ej. 2º jueves)</option>
-                  <option value="calendar">Día fijo del mes (1–31)</option>
-                </select>
-                {bankCutMode === "weekday" ? (
-                  <CutoffWeekdayPicker
-                    weekday={bankCutWeekday}
-                    nth={bankCutNth}
-                    onWeekdayChange={setBankCutWeekday}
-                    onNthChange={setBankCutNth}
-                    ids={{ weekday: "cc-cut-weekday", nth: "cc-cut-nth" }}
-                  />
-                ) : bankCutMode === "calendar" ? (
-                  <input
-                    id="cc-cut-day"
-                    type="number"
-                    min={1}
-                    max={31}
-                    inputMode="numeric"
-                    value={bankCutDay}
-                    onChange={(e) => setBankCutDay(e.target.value)}
-                    placeholder="Ej: 19"
-                    className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-                  />
-                ) : (
-                  <div className="h-11 flex items-center px-4 text-sm text-slate-400 bg-slate-700/30 border border-slate-700 rounded-xl">
-                    La cuota 1 vence el mes siguiente a la compra
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex sm:justify-end sm:pb-0">
-              <SaveButton loading={savingBanks} label="Agregar banco" />
-            </div>
-          </div>
+        <div className="flex items-center justify-between gap-3">
           <p className="text-[10px] text-slate-500 leading-snug">
             Día hábil: solo lunes a viernes (no cuenta sábados ni domingos ni feriados). Si tu banco usa otro criterio, elegí “Día fijo del calendario”.
           </p>
-        </form>
+          <button
+            type="button"
+            onClick={openAddBank}
+            disabled={savingBanks}
+            className="shrink-0 h-10 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition disabled:opacity-50"
+          >
+            Agregar banco
+          </button>
+        </div>
         {creditBanks.length === 0 ? (
           <p className="text-sm text-slate-500">Todavía no agregaste ningún banco.</p>
         ) : (
@@ -715,6 +645,157 @@ export default function ConfiguracionesPage() {
                     Cancelar
                   </button>
                   <SaveButton loading={savingBanks} label="Guardar cambios" />
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal agregar banco (reusa estilo del de editar) */}
+        {addBankOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/65 backdrop-blur-sm"
+              onClick={savingBanks ? undefined : closeAddBank}
+              aria-hidden
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="add-cc-bank-title"
+              className="relative w-full max-w-lg bg-[#1e293b] border border-slate-600/80 rounded-2xl shadow-2xl shadow-black/40 overflow-hidden"
+            >
+              <div className="flex items-center justify-between gap-2 px-5 sm:px-6 py-4 border-b border-slate-700/50 bg-slate-800/40">
+                <div className="min-w-0">
+                  <h3 id="add-cc-bank-title" className="text-base font-semibold text-white truncate">
+                    Agregar banco
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Definí vencimiento del resumen y fecha de corte (cierre).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeAddBank}
+                  disabled={savingBanks}
+                  className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+                  aria-label="Cerrar"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleAddBank} className="p-5 sm:p-6 space-y-4">
+                <div className="min-w-0">
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="add-cc-bank-name">
+                    Nombre del banco
+                  </label>
+                  <input
+                    id="add-cc-bank-name"
+                    type="text"
+                    value={bankInput}
+                    onChange={(e) => setBankInput(e.target.value)}
+                    placeholder="Ej: Galicia, Santander…"
+                    className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition"
+                    autoFocus
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] gap-3 items-end">
+                  <div className="min-w-0">
+                    <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="add-cc-due-mode">
+                      Tipo de vencimiento
+                    </label>
+                    <select
+                      id="add-cc-due-mode"
+                      value={bankDueMode}
+                      onChange={(e) => setBankDueMode(e.target.value as "calendar" | "business")}
+                      className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    >
+                      <option value="business">N-ésimo día hábil (lun–vie)</option>
+                      <option value="calendar">Día fijo del calendario (1–31)</option>
+                    </select>
+                  </div>
+
+                  <div className="min-w-0">
+                    <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="add-cc-due-value">
+                      {bankDueMode === "business" ? "Qué día hábil" : "Día del mes"}
+                    </label>
+                    {bankDueMode === "business" ? (
+                      <NthBusinessDaySelect
+                        id="add-cc-due-value"
+                        value={bankBusinessNth}
+                        onChange={setBankBusinessNth}
+                      />
+                    ) : (
+                      <input
+                        id="add-cc-due-value"
+                        type="number"
+                        min={1}
+                        max={31}
+                        inputMode="numeric"
+                        value={bankCalendarDay}
+                        onChange={(e) => setBankCalendarDay(e.target.value)}
+                        placeholder="Opcional"
+                        className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div className="min-w-0">
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="add-cc-cut-mode">
+                    Fecha de corte (cierre)
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] gap-2 items-center">
+                    <select
+                      id="add-cc-cut-mode"
+                      value={bankCutMode}
+                      onChange={(e) => setBankCutMode(e.target.value as "none" | "calendar" | "weekday")}
+                      className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    >
+                      <option value="none">Sin corte (legacy)</option>
+                      <option value="weekday">N-ésimo día de semana hábil (ej. 2º jueves)</option>
+                      <option value="calendar">Día fijo del mes (1–31)</option>
+                    </select>
+                    {bankCutMode === "weekday" ? (
+                      <CutoffWeekdayPicker
+                        weekday={bankCutWeekday}
+                        nth={bankCutNth}
+                        onWeekdayChange={setBankCutWeekday}
+                        onNthChange={setBankCutNth}
+                        ids={{ weekday: "add-cc-cut-weekday", nth: "add-cc-cut-nth" }}
+                      />
+                    ) : bankCutMode === "calendar" ? (
+                      <input
+                        id="add-cc-cut-day"
+                        type="number"
+                        min={1}
+                        max={31}
+                        inputMode="numeric"
+                        value={bankCutDay}
+                        onChange={(e) => setBankCutDay(e.target.value)}
+                        placeholder="Ej: 19"
+                        className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                      />
+                    ) : (
+                      <div className="h-11 flex items-center px-4 text-sm text-slate-400 bg-slate-700/30 border border-slate-700 rounded-xl">
+                        La cuota 1 vence el mes siguiente a la compra
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeAddBank}
+                    disabled={savingBanks}
+                    className="px-4 py-2.5 rounded-xl border border-slate-600 text-slate-300 hover:text-white hover:bg-slate-700/80 text-sm font-medium transition disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                  <SaveButton loading={savingBanks} label="Agregar" />
                 </div>
               </form>
             </div>
