@@ -17,6 +17,7 @@ import {
   Users,
   Home,
   ShoppingBag,
+  ShoppingCart,
   PawPrint,
   Gift,
   Repeat,
@@ -24,11 +25,13 @@ import {
   Package,
 } from "lucide-react";
 import type { Expense } from "@/lib/types";
+import { paymentMethodFullLabel } from "@/lib/expenseDisplay";
 import { deleteExpense } from "@/lib/api";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
 const CATEGORY_COLORS: Record<string, string> = {
   Comidas: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
+  Supermercado: "bg-green-500/10 text-green-300 border-green-500/20",
   Delivery: "bg-lime-500/10 text-lime-300 border-lime-500/20",
   Salidas: "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/20",
   Viajes: "bg-sky-500/10 text-sky-300 border-sky-500/20",
@@ -48,6 +51,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const CATEGORY_ICON: Record<string, ComponentType<{ className?: string }>> = {
   Comidas: Utensils,
+  Supermercado: ShoppingCart,
   Delivery: Package,
   Salidas: PartyPopper,
   Viajes: Plane,
@@ -87,9 +91,11 @@ interface Props {
   baseCurrency: string;
   onDeleted: (id: number) => void;
   onEdit?: (expense: Expense) => void;
+  /** Al hacer clic en la fila (no en acciones). */
+  onRowClick?: (expense: Expense) => void;
 }
 
-export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit }: Props) {
+export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit, onRowClick }: Props) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
   const [sortAsc, setSortAsc] = useState(false);
@@ -151,10 +157,22 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
         <tbody className="divide-y divide-slate-700/50">
           {sorted.map((expense) => {
             const isConverted = expense.original_currency !== baseCurrency;
+            const payFull = paymentMethodFullLabel(expense);
             return (
               <tr
                 key={expense.id}
-                className="hover:bg-slate-800/40 transition-colors group"
+                onClick={() => onRowClick?.(expense)}
+                onKeyDown={(e) => {
+                  // Solo activar con teclado si la fila misma tiene foco (no al interactuar con modales/botones).
+                  if (e.currentTarget !== e.target) return;
+                  if (onRowClick && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault();
+                    onRowClick(expense);
+                  }
+                }}
+                tabIndex={onRowClick ? 0 : undefined}
+                role={onRowClick ? "button" : undefined}
+                className={`hover:bg-slate-800/40 transition-colors group ${onRowClick ? "cursor-pointer" : ""}`}
               >
                 <td className="px-4 py-3 font-medium text-slate-100 max-w-[200px] truncate">
                   {expense.description}
@@ -170,15 +188,13 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                     {expense.category}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-slate-300 text-xs max-w-[9rem] truncate hidden sm:table-cell">
-                  {expense.payment_method ?? "Otro"}
-                  {expense.payment_method === "Tarjeta de crédito" && expense.credit_card_bank
-                    ? ` · ${expense.credit_card_bank}`
-                    : ""}
-                  {expense.payment_method === "Tarjeta de crédito" &&
-                  (expense.credit_installments ?? 1) > 1
-                    ? ` · ${expense.credit_installments ?? 1} cuotas`
-                    : ""}
+                <td className="hidden max-w-[11rem] px-4 py-3 sm:table-cell">
+                  <span
+                    className="block truncate text-xs text-slate-300"
+                    title={payFull}
+                  >
+                    {payFull}
+                  </span>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-slate-300">
                   {formatCurrency(expense.original_amount, expense.original_currency)}{" "}
@@ -208,12 +224,15 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                 <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
                   {formatDate(expense.created_at)}
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
                     {onEdit && (
                       <button
                         type="button"
-                        onClick={() => onEdit(expense)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEdit(expense);
+                        }}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-blue-300 hover:bg-blue-500/10 transition"
                         title="Editar gasto"
                       >
@@ -222,7 +241,10 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                     )}
                     <button
                       type="button"
-                      onClick={() => setDeleteTarget(expense)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteTarget(expense);
+                      }}
                       disabled={deletingId === expense.id}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-red-300 hover:bg-red-500/10 disabled:cursor-wait transition"
                       title="Eliminar gasto"

@@ -18,6 +18,7 @@ import {
   Users,
   Home,
   ShoppingBag,
+  ShoppingCart,
   PawPrint,
   Gift,
   Repeat,
@@ -25,11 +26,13 @@ import {
   Package,
 } from "lucide-react";
 import { deleteExpense } from "@/lib/api";
+import { paymentMethodFullLabel } from "@/lib/expenseDisplay";
 import type { Expense } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
 const CATEGORY_COLORS: Record<string, { badge: string; dot: string }> = {
   Comidas:       { badge: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",  dot: "bg-emerald-400" },
+  Supermercado:  { badge: "bg-green-500/10 text-green-300 border-green-500/20",        dot: "bg-green-400" },
   Delivery:      { badge: "bg-lime-500/10 text-lime-300 border-lime-500/20",           dot: "bg-lime-400" },
   Salidas:       { badge: "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/20",  dot: "bg-fuchsia-400" },
   Viajes:        { badge: "bg-sky-500/10 text-sky-300 border-sky-500/20",              dot: "bg-sky-400" },
@@ -49,6 +52,7 @@ const CATEGORY_COLORS: Record<string, { badge: string; dot: string }> = {
 
 const CATEGORY_ICON: Record<string, ComponentType<{ className?: string }>> = {
   Comidas: Utensils,
+  Supermercado: ShoppingCart,
   Delivery: Package,
   Salidas: PartyPopper,
   Viajes: Plane,
@@ -96,6 +100,7 @@ export default function ExpenseCard({ expense, baseCurrency, onDeleted, onEdit }
 
   const colors = CATEGORY_COLORS[expense.category] ?? CATEGORY_COLORS.Otro;
   const isConverted = expense.original_currency !== baseCurrency;
+  const payFull = paymentMethodFullLabel(expense);
 
   async function executeDelete() {
     setDeleting(true);
@@ -138,15 +143,11 @@ export default function ExpenseCard({ expense, baseCurrency, onDeleted, onEdit }
           })()}
           {expense.category}
         </span>
-        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border border-amber-500/25 bg-amber-500/10 text-amber-200/90">
-          {expense.payment_method ?? "Otro"}
-          {expense.payment_method === "Tarjeta de crédito" && expense.credit_card_bank
-            ? ` · ${expense.credit_card_bank}`
-            : ""}
-          {expense.payment_method === "Tarjeta de crédito" &&
-          (expense.credit_installments ?? 1) > 1
-            ? ` · ${expense.credit_installments ?? 1} cuotas`
-            : ""}
+        <span
+          className="inline-flex min-w-0 max-w-full items-center truncate px-2.5 py-1 rounded-full text-xs font-medium border border-amber-500/25 bg-amber-500/10 text-amber-200/90"
+          title={payFull}
+        >
+          {payFull}
         </span>
       </div>
 

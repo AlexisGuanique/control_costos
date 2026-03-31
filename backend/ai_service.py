@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 
 _CATEGORIES_BLOCK = (
-    "Comidas, Viajes, Salidas, Auto, Belleza, Delivery, Deporte, Educación, "
+    "Comidas, Supermercado, Viajes, Salidas, Auto, Belleza, Delivery, Deporte, Educación, "
     "Familia, Hogar, Ropa, Mascotas, Regalos, Suscripciones, Salud, Otro"
 )
 
@@ -51,9 +51,24 @@ Medios de pago permitidos — el campo payment_method en create o en patch debe 
 {payment_methods_block}
 ---
 
-Bancos de tarjeta del usuario — si payment_method es "Tarjeta de crédito", el campo credit_card_bank debe ser EXACTAMENTE uno de estos nombres (misma mayúsculas/minúsculas que en la lista), o null solo si la lista dice que no hay bancos configurados:
+Bancos de tarjeta del usuario:
 ---
 {user_banks_block}
+---
+Reglas de bancos (MUY IMPORTANTE):
+- **Nunca** le sugieras al usuario usar otro banco distinto al que él eligió (ej. si dice BBVA, NO ofrezcas Santander ni otro de la lista en su lugar).
+- Si la lista **tiene** bancos y el usuario nombra un banco que **no** está en esa lista:
+  1) Primero devolvé **`clarify`** con un mensaje que:
+     - Diga que ese banco no existe en su lista.
+     - Liste los bancos disponibles.
+     - Pregunte si quiere **asociarlo** a uno de los existentes o **agregar** ese banco a su lista.
+  2) Luego, según la respuesta:
+     - Si el usuario elige **asociar**: en `create`, usá `credit_card_bank` con el banco elegido de la lista.
+     - Si el usuario elige **agregar**: en `create`, usá `credit_card_bank` con el banco nuevo y registrá vencimiento del resumen:
+       - **Calendario**: `credit_card_due_mode: "calendar"` y `credit_card_due_day` (1–31).
+       - **Día hábil**: `credit_card_due_mode: "business"` y `credit_card_business_nth` (1–23). Ej: “1er día hábil” => business_nth=1.
+- Si el bloque indica que **NO hay** bancos en la lista: con tarjeta de crédito podés poner `credit_card_bank` con el nombre que dijo el usuario (texto libre); el vencimiento es opcional.
+- Si el banco **sí** está en la lista (mismo nombre, sin importar mayúsculas), usá el nombre exacto de la lista y no hace falta vencimiento.
 ---
 
 Historial reciente del chat (mantené contexto: si ya hablaron de un gasto concreto, no lo pierdas en el siguiente turno):
@@ -68,9 +83,17 @@ Memoria y seguimiento (muy importante — no confundas ALTA con EDICIÓN):
 - Si el asistente listó bancos disponibles y el usuario eligió uno: si era para **completar un alta**, usá **create** con data completo; si era para **cambiar un gasto ya cargado**, usá **edit** con expense_id.
 - **Nunca** devuelvas **edit** sin un **expense_id** entero válido que exista en la lista de gastos recientes (salvo que el usuario diga "último" y tomes el id de la primera línea).
 
+Regla crítica de monto (NO inventar):
+- Si el usuario todavía NO dijo el monto (ni en el mensaje actual ni en el historial), **no inventes** `original_amount`. En ese caso devolvé **`clarify`** preguntando el monto (y moneda si no está).
+
 Reglas para tarjeta de crédito y cuotas:
 - Si el usuario pide "en N cuotas", "en 3 cuotas sin interés", etc., incluí credit_installments con el entero N (entre 1 y 60; 1 = un solo pago).
-- Si cambiás o creás un gasto con "Tarjeta de crédito", siempre incluí credit_card_bank con un nombre de la lista de bancos (si la lista está vacía, usá clarify indicando que debe cargar bancos en Configuración).
+- Con "Tarjeta de crédito", el banco es **obligatorio siempre**: si el usuario todavía no dijo el banco, devolvé `clarify` preguntándolo.
+- Si hay bancos en la lista: si el usuario **elige** uno de la lista, `credit_card_bank` debe ser exactamente ese nombre.
+- Si el usuario nombra un banco que **no** está en la lista:
+  - Primero devolvé `clarify` ofreciendo asociar o agregar.
+  - Si elige **agregar**, incluí vencimiento con `credit_card_due_mode` + (`credit_card_due_day` o `credit_card_business_nth`).
+- Si NO hay bancos en la lista: decíselo y pedile el banco + vencimiento para agregarlo.
 - **Cantidad de cuotas (obligatorio para alta nueva):** si inferís **Tarjeta de crédito** con banco válido pero en el **historial del chat** (incluido el mensaje actual) **no** queda claro en cuántas cuotas pagó (no dijo número de cuotas, ni "un solo pago", ni "de contado en una cuota", ni "al contado con tarjeta", etc.), **no** devuelvas `create` todavía: devolvé **`clarify`** preguntando, por ejemplo: "¿En cuántas cuotas lo pagaste?" (podés combinar esa pregunta con la del banco si todavía falta el banco). Solo cuando ya sepas las cuotas (porque el usuario las dijo o respondió a tu pregunta), devolvé `create` con **credit_installments** entre 1 y 60.
 - En `create`, si las cuotas **aún no están aclaradas**, omití `credit_installments` o ponelo en **null** y el servidor pedirá aclaración. **No** uses `credit_installments: 1` como valor por defecto si el usuario no dijo "un pago", "una cuota", "de contado", etc.
 - Si el usuario pasa de tarjeta a otro medio, podés poner credit_card_bank en null y credit_installments en 1 en el patch.
@@ -79,7 +102,7 @@ Reglas para tarjeta de crédito y cuotas:
 Devolvé EXCLUSIVAMENTE un JSON válido con UNA de estas formas (sin markdown ni texto extra):
 
 A) Gasto NUEVO — cuando registra un gasto sin referirse a uno existente:
-{{"action":"create","data":{{"description":"...","original_amount":número,"original_currency":"ARS|USD|EUR","category":"Comidas|Viajes|Salidas|Auto|Belleza|Delivery|Deporte|Educación|Familia|Hogar|Ropa|Mascotas|Regalos|Suscripciones|Salud|Otro","payment_method":"<uno exacto de la lista de medios>","credit_card_bank":null o string exacto de la lista de bancos,"credit_installments":null o entero 1-60}}}}
+{{"action":"create","data":{{"description":"...","original_amount":número,"original_currency":"ARS|USD|EUR","category":"Comidas|Viajes|Salidas|Auto|Belleza|Delivery|Deporte|Educación|Familia|Hogar|Ropa|Mascotas|Regalos|Suscripciones|Salud|Otro","payment_method":"<uno exacto de la lista de medios>","credit_card_bank":null o string,"credit_installments":null o entero 1-60,"credit_card_due_mode":null o "calendar"|"business","credit_card_due_day":null o entero 1-31,"credit_card_business_nth":null o entero 1-23}}}}
 
 B) EDITAR un gasto existente — cuando pide modificar algo ya cargado:
 {{"action":"edit","expense_id":<entero id de la lista>,"patch":{{...solo campos que cambian: description, original_amount, original_currency, category, payment_method, credit_card_bank, credit_installments}}}}
@@ -106,7 +129,9 @@ REPAIR_ACTION_SYSTEM_PROMPT = """La IA devolvió un JSON que no cumple las regla
 Tu tarea: devolvé UN SOLO JSON válido con la misma estructura que las instrucciones originales (action: create | edit | delete | clarify).
 
 Reglas críticas:
-- Si el usuario aclaraba banco, medio de pago o cuotas para un gasto NUEVO que todavía no está en la base (el asistente había preguntado cómo pagó), devolvé "action":"create" con un objeto "data" COMPLETO (description, original_amount, original_currency, category, payment_method, credit_card_bank, credit_installments, etc.) fusionando el historial del chat con el mensaje actual. NO uses "edit" sin expense_id en ese caso.
+- Si el usuario aclaraba banco, medio de pago o cuotas para un gasto NUEVO que todavía no está en la base (el asistente había preguntado cómo pagó), devolvé "action":"create" con un objeto "data" COMPLETO (description, original_amount, original_currency, category, payment_method, credit_card_bank, credit_installments, credit_card_due_day si aplica, etc.) fusionando el historial del chat con el mensaje actual. NO uses "edit" sin expense_id en ese caso.
+- Si falta el monto (no lo dijo en la conversación), devolvé "action":"clarify" preguntando el monto; nunca inventes original_amount.
+- No sugieras cambiar el banco del usuario por otro de la lista. Si el banco no está en su lista y la lista no está vacía, usá clarify ofreciendo asociar o agregar; si se agrega, pedí vencimiento (día 1-31 calendario o N-ésimo día hábil 1-23).
 - Para **Tarjeta de crédito** con banco: si faltan las cuotas, usá **clarify** o `credit_installments` null hasta que el usuario aclare; no asumas un número sin que lo haya dicho.
 - Usá "edit" solo si el gasto ya existe en la lista de gastos recientes y tenés un expense_id entero válido de esa lista.
 - Nunca devuelvas "edit" sin expense_id entero y patch no vacío.
@@ -121,7 +146,7 @@ Medios de pago:
 {payment_methods_block}
 ---
 
-Bancos:
+Bancos (no sugieras otro banco; banco nuevo con lista no vacía + credit_card_due_day 1-31 si el usuario lo dijo):
 ---
 {user_banks_block}
 ---

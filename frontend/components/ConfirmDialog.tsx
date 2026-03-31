@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 
 interface Props {
@@ -26,6 +26,7 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
 }: Props) {
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -98,6 +99,8 @@ export default function ConfirmDialog({
             type="button"
             disabled={loading}
             onClick={onConfirm}
+            ref={confirmRef}
+            autoFocus
             className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-50 flex items-center gap-2 ${confirmBtn}`}
           >
             {loading && (

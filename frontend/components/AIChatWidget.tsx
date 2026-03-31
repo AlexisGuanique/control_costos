@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, Sparkles, X } from "lucide-react";
-import { createExpenseFromAI, createTripExpenseFromAI, deleteExpense } from "@/lib/api";
+import { createExpenseFromAI, createTripExpenseFromAI, deleteExpense, getMe } from "@/lib/api";
 import type { AIChatTurn, Expense, TripExpense } from "@/lib/types";
+import { useUser } from "@/lib/UserContext";
 
 interface Message {
   id: string;
@@ -76,6 +77,8 @@ export default function AIChatWidget({
   onExpenseUpdated,
   onExpenseDeleted,
 }: Props) {
+  const { setUser } = useUser();
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const [messages, setMessages] = useState<Message[]>(() => [
     {
       id: "welcome",
@@ -131,6 +134,14 @@ export default function AIChatWidget({
 
     const { expense, action } = result;
     if (!expense) return;
+
+    // Si el backend agregó bancos a la cuenta (o cambió otros datos), refrescamos el user
+    // para que Configuración muestre los cambios sin recargar la página.
+    getMe()
+      .then(setUser)
+      .catch(() => {
+        /* ignore */
+      });
 
     if (action === "pending_delete") {
       const mid = (Date.now() + 1).toString();
@@ -265,6 +276,8 @@ export default function AIChatWidget({
     setMessages(snapshot);
     setInput("");
     setLoading(true);
+    // Mantener foco en el input para mensajes consecutivos.
+    requestAnimationFrame(() => inputRef.current?.focus());
 
     try {
       if (variant === "trip") {
@@ -297,6 +310,7 @@ export default function AIChatWidget({
       ]);
     } finally {
       setLoading(false);
+      requestAnimationFrame(() => inputRef.current?.focus());
     }
   }
 
@@ -421,6 +435,7 @@ export default function AIChatWidget({
               className="flex gap-2"
             >
               <input
+                ref={inputRef}
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}

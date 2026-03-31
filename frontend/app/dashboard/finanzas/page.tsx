@@ -46,6 +46,7 @@ import {
 } from "@/lib/creditCardDue";
 import ExpenseTable from "@/components/ExpenseTable";
 import ExpenseCard from "@/components/ExpenseCard";
+import ExpenseDetailModal from "@/components/ExpenseDetailModal";
 import ExpenseModal from "@/components/ExpenseModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import DayOfMonthPicker from "@/components/DayOfMonthPicker";
@@ -225,6 +226,7 @@ export default function FinanzasPage() {
   const [deleteTarget, setDeleteTarget] = useState<FinancesDeleteTarget>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [expenseModal, setExpenseModal] = useState<null | "new" | Expense>(null);
+  const [detailExpense, setDetailExpense] = useState<Expense | null>(null);
 
   const [ccModalOpen, setCcModalOpen] = useState(false);
   const [ccDetail, setCcDetail] = useState<CreditCardBreakdown | null>(null);
@@ -1315,11 +1317,21 @@ export default function FinanzasPage() {
                 baseCurrency={baseCurrency}
                 onDeleted={handleExpenseDeleted}
                 onEdit={(e) => setExpenseModal(e)}
+                onRowClick={(e) => setDetailExpense(e)}
               />
             </div>
           </>
         )}
       </div>
+
+      {detailExpense != null && (
+        <ExpenseDetailModal
+          expense={detailExpense}
+          baseCurrency={baseCurrency}
+          onClose={() => setDetailExpense(null)}
+          onEdit={(e) => setExpenseModal(e)}
+        />
+      )}
 
       {expenseModal != null && (
         <ExpenseModal

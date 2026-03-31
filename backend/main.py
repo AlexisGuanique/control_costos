@@ -1,4 +1,5 @@
 import calendar
+import re
 from datetime import date, datetime
 from typing import List, Optional, Tuple
 
@@ -126,75 +127,6 @@ def _validate_due_day(value: Optional[int]) -> None:
         )
 
 
-def _validate_cut_day(value: Optional[int]) -> None:
-    if value is None:
-        return
-    if value < 1 or value > 31:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El día de corte debe estar entre 1 y 31",
-        )
-
-
-def _nth_weekday_of_month_date(year: int, month: int, weekday: int, nth: int) -> Optional[date]:
-    """Devuelve la fecha de la N-ésima ocurrencia de weekday en el mes (1..5)."""
-    if weekday < 0 or weekday > 6 or nth < 1 or nth > 5:
-        return None
-    last = calendar.monthrange(year, month)[1]
-    count = 0
-    for day in range(1, last + 1):
-        d = date(year, month, day)
-        if d.weekday() == weekday:
-            count += 1
-            if count == nth:
-                return d
-    return None
-
-
-def _cut_date_for_month(cfg: Optional[CreditCardBankEntry], year: int, month: int) -> Optional[date]:
-    """
-    Fecha de corte del mes para un banco.
-    - none: sin corte (legacy)
-    - calendar: día del mes (cut_day)
-    - weekday: N-ésimo día de semana hábil (ej. 3er jueves del mes; lun–vie)
-    Nota: días hábiles = lun–vie; no considera feriados.
-    """
-    if not cfg:
-        return None
-    mode = str(getattr(cfg, "cut_mode", "none") or "none").strip().lower()
-    if mode in ("", "none", "null"):
-        return None
-    if mode == "calendar":
-        cd = getattr(cfg, "cut_day", None)
-        if cd is None:
-            return None
-        try:
-            d_int = int(cd)
-        except (TypeError, ValueError):
-            return None
-        if d_int < 1 or d_int > 31:
-            return None
-        last = calendar.monthrange(year, month)[1]
-        return date(year, month, min(d_int, last))
-    if mode == "weekday":
-        wd = getattr(cfg, "cut_weekday", None)
-        nth = getattr(cfg, "cut_weekday_nth", None)
-        if wd is None or nth is None:
-            return None
-        try:
-            wd_i = int(wd)
-            nth_i = int(nth)
-        except (TypeError, ValueError):
-            return None
-        d = _nth_weekday_of_month_date(year, month, wd_i, nth_i)
-        if not d:
-            return None
-        if d.weekday() >= 5:
-            return None
-        return d
-    return None
-
-
 def _cc_cutoff_overrides_map(session: Session, user_id: str) -> dict[tuple[str, int, int], date]:
     """(bank, year, month) -> cut_date."""
     rows = session.exec(
@@ -209,10 +141,33 @@ def _cc_cutoff_overrides_map(session: Session, user_id: str) -> dict[tuple[str, 
     return out
 
 
+def _nth_weekday_of_month_date(year: int, month: int, weekday: int, nth: int) -> Optional[date]:
+    """N-ésima ocurrencia de weekday en el mes (weekday: 0=lun … 6=dom)."""
+    if weekday < 0 or weekday > 6 or nth < 1 or nth > 5:
+        return None
+    last = calendar.monthrange(year, month)[1]
+    count = 0
+    for day in range(1, last + 1):
+        d = date(year, month, day)
+        if d.weekday() == weekday:
+            count += 1
+            if count == nth:
+                return d
+    return None
+
+
+def _default_cut_date_no_monthly_override(year: int, month: int) -> date:
+    """Sin corte mensual guardado: 4.º jueves del mes (referencia de cierre)."""
+    d = _nth_weekday_of_month_date(year, month, 3, 4)  # jueves = 3
+    if d is None:
+        last = calendar.monthrange(year, month)[1]
+        return date(year, month, last)
+    return d
+
+
 def _cc_first_installment_start_month(
     e: Expense,
     *,
-    cfg_by_name: dict[str, CreditCardBankEntry],
     cutoff_overrides: dict[tuple[str, int, int], date],
 ) -> tuple[int, int]:
     """
@@ -220,7 +175,8 @@ def _cc_first_installment_start_month(
     Regla:
     - si compra <= corte => mes+1
     - si compra >  corte => mes+2
-    Corte: override mensual si existe; si no, regla del banco; si no, legacy (mes+1).
+    Corte: fecha en /finances/credit-cards/cutoffs para ese banco y mes de compra.
+    Si no hay corte guardado para ese mes: se usa el 4.º jueves del mes de la compra como referencia.
     """
     sy, sm = e.created_at.year, e.created_at.month
     bank = (e.credit_card_bank or "").strip()
@@ -229,10 +185,8 @@ def _cc_first_installment_start_month(
 
     cut = cutoff_overrides.get((bank, sy, sm))
     if cut is None:
-        cfg = cfg_by_name.get(bank)
-        cut = _cut_date_for_month(cfg, sy, sm)
-
-    delta_first = 1 if cut is None or e.created_at.date() <= cut else 2
+        cut = _default_cut_date_no_monthly_override(sy, sm)
+    delta_first = 1 if e.created_at.date() <= cut else 2
     return _add_months(sy, sm, delta_first)
 
 
@@ -295,51 +249,7 @@ def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntr
                 except (TypeError, ValueError):
                     pass
 
-            cut_mode_raw = str(item.get("cut_mode") or "none").strip().lower()
-            if cut_mode_raw not in ("none", "calendar", "weekday"):
-                cut_mode_raw = "none"
-            cut_day_raw = item.get("cut_day")
-            cut_day: Optional[int] = None
-            if cut_day_raw is not None:
-                try:
-                    ci = int(cut_day_raw)
-                    if 1 <= ci <= 31:
-                        cut_day = ci
-                except (TypeError, ValueError):
-                    pass
-            cut_wd_raw = item.get("cut_weekday")
-            cut_weekday: Optional[int] = None
-            if cut_wd_raw is not None:
-                try:
-                    wi = int(cut_wd_raw)
-                    if 0 <= wi <= 6:
-                        cut_weekday = wi
-                except (TypeError, ValueError):
-                    pass
-            cut_nth_raw = item.get("cut_weekday_nth")
-            cut_weekday_nth: Optional[int] = None
-            if cut_nth_raw is not None:
-                try:
-                    ni = int(cut_nth_raw)
-                    if 1 <= ni <= 4:
-                        cut_weekday_nth = ni
-                except (TypeError, ValueError):
-                    pass
-
-            if cut_mode_raw == "calendar":
-                cut_weekday = None
-                cut_weekday_nth = None
-            elif cut_mode_raw == "weekday":
-                cut_day = None
-                if cut_weekday is None or cut_weekday_nth is None or cut_weekday >= 5:
-                    cut_mode_raw = "none"
-                    cut_weekday = None
-                    cut_weekday_nth = None
-            else:
-                cut_day = None
-                cut_weekday = None
-                cut_weekday_nth = None
-
+            # Corte por mes: solo en /finances/credit-cards/cutoffs; no se guarda regla en el banco.
             if mode_raw == "business" and business_nth is not None:
                 out.append(
                     CreditCardBankEntry(
@@ -347,10 +257,10 @@ def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntr
                         due_mode="business",
                         due_day=None,
                         business_nth=business_nth,
-                        cut_mode=cut_mode_raw,
-                        cut_day=cut_day,
-                        cut_weekday=cut_weekday,
-                        cut_weekday_nth=cut_weekday_nth,
+                        cut_mode="none",
+                        cut_day=None,
+                        cut_weekday=None,
+                        cut_weekday_nth=None,
                     )
                 )
             else:
@@ -360,10 +270,10 @@ def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntr
                         due_mode="calendar",
                         due_day=due,
                         business_nth=None,
-                        cut_mode=cut_mode_raw,
-                        cut_day=cut_day,
-                        cut_weekday=cut_weekday,
-                        cut_weekday_nth=cut_weekday_nth,
+                        cut_mode="none",
+                        cut_day=None,
+                        cut_weekday=None,
+                        cut_weekday_nth=None,
                     )
                 )
         if len(out) >= 40:
@@ -401,40 +311,12 @@ def _normalize_credit_card_banks_for_storage(
                 due = None
             base = {"name": name, "due_mode": "calendar", "due_day": due, "business_nth": None}
 
-        cut_mode = str(getattr(e, "cut_mode", "none") or "none").strip().lower()
-        if cut_mode not in ("none", "calendar", "weekday"):
-            cut_mode = "none"
-        cut_day = getattr(e, "cut_day", None)
-        if cut_day is not None and (cut_day < 1 or cut_day > 31):
-            cut_day = None
-        cut_weekday = getattr(e, "cut_weekday", None)
-        if cut_weekday is not None and (cut_weekday < 0 or cut_weekday > 6):
-            cut_weekday = None
-        cut_weekday_nth = getattr(e, "cut_weekday_nth", None)
-        if cut_weekday_nth is not None and (cut_weekday_nth < 1 or cut_weekday_nth > 4):
-            cut_weekday_nth = None
-
-        if cut_mode == "calendar":
-            cut_weekday = None
-            cut_weekday_nth = None
-            _validate_cut_day(cut_day)
-        elif cut_mode == "weekday":
-            cut_day = None
-            if cut_weekday is None or cut_weekday_nth is None or cut_weekday >= 5:
-                cut_mode = "none"
-                cut_weekday = None
-                cut_weekday_nth = None
-        else:
-            cut_day = None
-            cut_weekday = None
-            cut_weekday_nth = None
-
         base.update(
             {
-                "cut_mode": cut_mode,
-                "cut_day": cut_day,
-                "cut_weekday": cut_weekday,
-                "cut_weekday_nth": cut_weekday_nth,
+                "cut_mode": "none",
+                "cut_day": None,
+                "cut_weekday": None,
+                "cut_weekday_nth": None,
             }
         )
         out.append(base)
@@ -459,6 +341,20 @@ def _normalize_credit_card_bank_value(bank: Optional[str]) -> Optional[str]:
         return None
     s = bank.strip()
     if not s:
+        return None
+    lowered = s.lower()
+    if any(
+        k in lowered
+        for k in (
+            "sin banco",
+            "no especific",
+            "sin especific",
+            "sin seleccionar",
+            "ninguno",
+            "n/a",
+            "(sin banco",
+        )
+    ):
         return None
     if len(s) > 128:
         raise HTTPException(
@@ -507,6 +403,87 @@ def _validate_expense_credit_card(
     return normalized
 
 
+def _append_credit_bank_to_user(
+    session: Session,
+    user: User,
+    bank_name: str,
+    *,
+    due_mode: str,
+    due_day: Optional[int],
+    business_nth: Optional[int],
+) -> None:
+    """
+    Agrega un banco a la lista del usuario con regla de vencimiento del resumen.
+    - due_mode: "calendar" (día del mes) o "business" (N-ésimo día hábil).
+    - due_day: 1–31 si due_mode="calendar"
+    - business_nth: 1–23 si due_mode="business"
+
+    Si el nombre ya existe (case-insensitive), no duplica.
+    """
+    normalized = _normalize_credit_card_bank_value(bank_name)
+    if not normalized:
+        return
+    parsed = _parse_credit_card_banks_from_stored(getattr(user, "credit_card_banks", None) or [])
+    if any(e.name.strip().lower() == normalized.lower() for e in parsed):
+        return
+    if len(parsed) >= 40:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ya tenés el máximo de bancos con tarjeta (40). Eliminá uno en Configuración.",
+        )
+
+    mode = (due_mode or "calendar").strip().lower()
+    if mode not in ("calendar", "business"):
+        mode = "calendar"
+
+    if mode == "business":
+        bn: Optional[int]
+        try:
+            bn = int(business_nth) if business_nth is not None else None
+        except (TypeError, ValueError):
+            bn = None
+        if bn is None or bn < 1 or bn > 23:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Para vencimiento por día hábil, indicá un número entre 1 y 23 (ej: 1er día hábil).",
+            )
+        new_entry = CreditCardBankEntry(
+            name=normalized,
+            due_mode="business",
+            due_day=None,
+            business_nth=bn,
+            cut_mode="none",
+            cut_day=None,
+            cut_weekday=None,
+            cut_weekday_nth=None,
+        )
+    else:
+        dd: Optional[int]
+        try:
+            dd = int(due_day) if due_day is not None else None
+        except (TypeError, ValueError):
+            dd = None
+        if dd is None or dd < 1 or dd > 31:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Indicá un día de vencimiento válido (1 a 31).",
+            )
+        new_entry = CreditCardBankEntry(
+            name=normalized,
+            due_mode="calendar",
+            due_day=dd,
+            business_nth=None,
+            cut_mode="none",
+            cut_day=None,
+            cut_weekday=None,
+            cut_weekday_nth=None,
+        )
+
+    combined = list(parsed) + [new_entry]
+    user.credit_card_banks = _normalize_credit_card_banks_for_storage(combined)
+    session.add(user)
+
+
 def _payment_methods_for_ai() -> str:
     """Texto exacto de cada enum para el prompt de IA."""
     return "\n".join(f"- {pm.value}" for pm in PaymentMethod)
@@ -549,6 +526,48 @@ def _format_conversation_for_ai(turns: Optional[list[AIChatTurn]]) -> str:
             lines.append(f"{label}: {c}")
     return "\n".join(lines) if lines else "(sin mensajes previos en esta conversación)"
 
+def _has_explicit_amount_in_text(text: str) -> bool:
+    """
+    Heurística defensiva para evitar que la IA "invente" montos.
+    Considera "monto explícito" si aparece:
+    - $ + número
+    - número + (ARS|USD|EUR|pesos|dólares|euros)
+    - expresiones típicas: "monto fue X", "por X", "costó X", "salió X", "pagué X", "gasté X"
+
+    Excluye patrones de cuotas ("en 10 cuotas", "10 cuotas") para no confundir monto con installments.
+    """
+    if not text:
+        return False
+    s = text.lower()
+
+    # Si todas las apariciones de números están asociadas a "cuotas", no es monto.
+    cuota_pat = r"(?:en\s*)?\d{1,3}\s*cuotas?\b"
+    # Jerga argentina: lucas/mangos/palos
+    # - "15 lucas" (=> 15000) cuenta como monto explícito
+    # - "15k" o "15 mil" también los tratamos como monto explícito
+    if re.search(r"\b\d{1,4}\s*(lucas?|luca)\b", s):
+        return True
+    if re.search(r"\b\d{1,4}\s*(k|mil)\b", s):
+        return True
+    if re.search(r"\b\d{1,3}\s*palos?\b", s):
+        return True
+    if re.search(r"\b\d{1,4}\s*mangos?\b", s):
+        return True
+    if re.search(r"\$\s*\d", s):
+        return True
+    if re.search(r"\b\d+(?:[.,]\d+)?\s*(ars|usd|eur|pesos?|d[oó]lares?|euros?)\b", s):
+        # Evitar "10 cuotas" etc.
+        if re.search(cuota_pat, s):
+            # podría haber monto y cuotas; si hay moneda explícita, ya devolvimos True arriba
+            pass
+        return True
+    if re.search(r"\b(monto|por|cost[oó]|sali[oó]|pag[uú]e|gast[eé]|fue)\b.{0,24}\b\d+(?:[.,]\d+)?\b", s):
+        # excluir si la mención está pegada a cuotas
+        if re.search(r"\b(monto|por|cost[oó]|sali[oó]|pag[uú]e|gast[eé]|fue)\b.{0,24}"+cuota_pat, s):
+            return False
+        return True
+    return False
+
 
 def _http_exception_detail_as_str(exc: HTTPException) -> str:
     d = exc.detail
@@ -572,10 +591,14 @@ def _user_credit_banks_for_ai(current_user: User) -> str:
     )
     if not configured:
         return (
-            "(sin bancos de tarjeta cargados; el usuario debe agregarlos en Configuración "
-            "para poder registrar gastos con tarjeta de crédito con banco asociado)"
+            "(sin bancos en la lista; el usuario puede agregarlos en Configuración o nombrando el banco "
+            "al cargar un gasto; el sistema lo guarda como texto libre.)"
         )
-    return "\n".join(f"- {e.name}" for e in configured)
+    return (
+        "Bancos ya cargados (si el usuario nombra otro banco, pedí el día 1-31 del vencimiento del "
+        "resumen y usá credit_card_due_day en create; no sugieras cambiar de banco):\n"
+        + "\n".join(f"- {e.name}" for e in configured)
+    )
 
 
 def _recent_expenses_for_ai(session: Session, user_id: str, limit: int = 50) -> str:
@@ -769,43 +792,6 @@ def _add_months(year: int, month: int, delta: int) -> Tuple[int, int]:
     return idx // 12, idx % 12 + 1
 
 
-def variable_portion_for_month(e: Expense, year: int, month: int) -> float:
-    """
-    Monto que cuenta en el mes para presupuesto: compras no tarjeta o 1 cuota en el mes de compra;
-    tarjeta en N cuotas reparte base_amount/N en cada mes del plan (desde el mes siguiente a la compra).
-    """
-    if e.payment_method != PaymentMethod.TARJETA_CREDITO:
-        cy, cm = e.created_at.year, e.created_at.month
-        if (cy, cm) == (year, month):
-            return round(e.base_amount, 2)
-        return 0.0
-    bank_ok = bool((e.credit_card_bank or "").strip())
-    n = max(1, int(e.credit_installments or 1))
-    if not bank_ok or n <= 1:
-        cy, cm = e.created_at.year, e.created_at.month
-        if (cy, cm) == (year, month):
-            return round(e.base_amount, 2)
-        return 0.0
-    # Legacy sin overrides: si no hay mapa de cortes mensual, usa corte "regla" del banco.
-    per = e.base_amount / n
-    sy, sm = e.created_at.year, e.created_at.month
-    bank = (e.credit_card_bank or "").strip()
-    cfg_by_name: dict[str, CreditCardBankEntry] = {}
-    if e.user and getattr(e.user, "credit_card_banks", None):
-        cfg_by_name = {
-            b.name: b for b in _parse_credit_card_banks_from_stored(e.user.credit_card_banks)
-        }
-    cut = _cut_date_for_month(cfg_by_name.get(bank), sy, sm) if bank else None
-    delta_first = 1 if cut is None or e.created_at.date() <= cut else 2
-    first_y, first_m = _add_months(sy, sm, delta_first)
-    for i in range(n):
-        # La primera cuota se refleja mes+1 o mes+2 según fecha de corte; luego una por mes.
-        y_m, m_m = _add_months(first_y, first_m, i)
-        if (y_m, m_m) == (year, month):
-            return round(per, 2)
-    return 0.0
-
-
 def _credit_card_paid_map(
     session: Session, user_id: str, year: int, month: int
 ) -> dict[str, bool]:
@@ -834,11 +820,8 @@ def _credit_card_month_rows_for_period(
         n = max(1, int(e.credit_installments or 1))
         if n <= 1:
             continue
-        cfg_by_name = {
-            b.name: b for b in _parse_credit_card_banks_from_stored(user.credit_card_banks)
-        }
         first_y, first_m = _cc_first_installment_start_month(
-            e, cfg_by_name=cfg_by_name, cutoff_overrides=cutoff_overrides
+            e, cutoff_overrides=cutoff_overrides
         )
         per = e.base_amount / n
         portion = 0.0
@@ -900,13 +883,6 @@ def _credit_card_breakdown(
     session: Session, user_id: str, year: int, month: int, base_currency: str
 ) -> CreditCardBreakdown:
     expenses = session.exec(select(Expense).where(Expense.user_id == user_id)).all()
-    # Config de corte/vencimiento por banco + overrides mensuales (historial).
-    user = session.get(User, user_id)
-    cfg_by_name = (
-        {b.name: b for b in _parse_credit_card_banks_from_stored(user.credit_card_banks)}
-        if user and user.credit_card_banks
-        else {}
-    )
     cutoff_overrides = _cc_cutoff_overrides_map(session, user_id)
     by_bank: dict[str, List[CreditCardPurchaseLine]] = {}
     for e in expenses:
@@ -920,7 +896,7 @@ def _credit_card_breakdown(
             continue
         sy, sm = e.created_at.year, e.created_at.month
         first_y, first_m = _cc_first_installment_start_month(
-            e, cfg_by_name=cfg_by_name, cutoff_overrides=cutoff_overrides
+            e, cutoff_overrides=cutoff_overrides
         )
         for i in range(n):
             y_m, m_m = _add_months(first_y, first_m, i)
@@ -1252,6 +1228,28 @@ async def create_expense_from_ai(
     try:
         currency = extracted.get("original_currency", "ARS").upper()
         amount = float(extracted.get("original_amount", 0))
+
+        # Evitar "montos inventados": si en el mensaje + historial no hubo un monto explícito,
+        # pedimos el monto aunque la IA haya puesto un número.
+        conv_text = _format_conversation_for_ai(request.conversation_history)
+        if not (_has_explicit_amount_in_text(request.message) or _has_explicit_amount_in_text(conv_text)):
+            body = AIExpenseResult(
+                action="assistant_message",
+                message="¿Cuál fue el monto del gasto? (Podés decir por ejemplo “$ 12500” o “12500 ARS”).",
+            )
+            return JSONResponse(
+                content=jsonable_encoder(body),
+                status_code=status.HTTP_200_OK,
+            )
+        if amount <= 0:
+            body = AIExpenseResult(
+                action="assistant_message",
+                message="Necesito el monto para registrarlo. ¿Cuánto fue? (ej: “$ 12500” o “12500 ARS”).",
+            )
+            return JSONResponse(
+                content=jsonable_encoder(body),
+                status_code=status.HTTP_200_OK,
+            )
         base_amount, rate = await convert_original_to_base(
             amount,
             currency,
@@ -1273,6 +1271,112 @@ async def create_expense_from_ai(
         bank_str: Optional[str] = None
         if isinstance(raw_bank, str):
             bank_str = raw_bank.strip() or None
+
+        # Tarjeta de crédito: en el chat el banco es obligatorio SIEMPRE.
+        configured_for_ai = _parse_credit_card_banks_from_stored(
+            getattr(current_user, "credit_card_banks", None) or []
+        )
+        if payment_method == PaymentMethod.TARJETA_CREDITO and not bank_str:
+            if configured_for_ai:
+                opts = ", ".join(e.name for e in configured_for_ai)
+                msg = (
+                    "¿Con qué banco pagaste la tarjeta? "
+                    f"Bancos disponibles: {opts}. "
+                    "Si es otro banco, decime el nombre y cuándo vence el resumen (día del mes o “1er día hábil”)."
+                )
+            else:
+                msg = (
+                    "Veo que todavía no tenés bancos con tarjeta cargados. "
+                    "Decime el banco de la tarjeta y cuándo vence el resumen "
+                    "(por ejemplo “BBVA vence el día 15” o “BBVA vence el 1er día hábil”)."
+                )
+            body = AIExpenseResult(action="assistant_message", message=msg)
+            return JSONResponse(content=jsonable_encoder(body), status_code=status.HTTP_200_OK)
+
+        # Tarjeta con banco:
+        # - Si ya hay bancos en la cuenta y el usuario nombra uno nuevo, primero preguntamos
+        #   si quiere asociarlo a uno existente o agregarlo a la lista.
+        # - Si decide agregarlo (o si no tenía bancos cargados), pedimos la regla de vencimiento.
+        if payment_method == PaymentMethod.TARJETA_CREDITO and bank_str:
+            configured = configured_for_ai
+            match_existing: Optional[str] = None
+            for e in configured:
+                if e.name.strip().lower() == bank_str.strip().lower():
+                    match_existing = e.name
+                    break
+            if match_existing is not None:
+                bank_str = match_existing
+            else:
+                due_mode_raw = extracted.get("credit_card_due_mode")
+                due_mode = str(due_mode_raw).strip().lower() if due_mode_raw is not None else ""
+                due_day_raw = extracted.get("credit_card_due_day")
+                business_nth_raw = extracted.get("credit_card_business_nth")
+
+                has_due_info = bool(
+                    (due_mode in ("calendar", "business"))
+                    or (due_day_raw is not None)
+                    or (business_nth_raw is not None)
+                )
+
+                if configured:
+                    configured_names = [e.name for e in configured]
+                    if not has_due_info:
+                        body = AIExpenseResult(
+                            action="assistant_message",
+                            message=(
+                                f"«{bank_str}» no está en tu lista de bancos. "
+                                f"Bancos disponibles: {', '.join(configured_names)}.\n\n"
+                                "¿Querés asociarlo a uno de los que ya tenés, o querés agregar "
+                                f"«{bank_str}» a tu lista?\n"
+                                "- Si querés **asociarlo**, decime cuál (ej: “asocialo a Santander”).\n"
+                                "- Si querés **agregarlo**, decime cuándo vence el resumen: "
+                                "podés decir “día 10” (calendario) o “1er día hábil”."
+                            ),
+                        )
+                        return JSONResponse(
+                            content=jsonable_encoder(body),
+                            status_code=status.HTTP_200_OK,
+                        )
+                else:
+                    # No había bancos cargados: para agregar el primero necesitamos vencimiento.
+                    if not has_due_info:
+                        body = AIExpenseResult(
+                            action="assistant_message",
+                            message=(
+                                f"Perfecto. Para agregar «{bank_str}» a tu lista, "
+                                "¿cuándo vence el resumen? "
+                                "Podés decir “día 10” (calendario) o “1er día hábil”."
+                            ),
+                        )
+                        return JSONResponse(
+                            content=jsonable_encoder(body),
+                            status_code=status.HTTP_200_OK,
+                        )
+
+                # Default: si no dijo due_mode pero mandó due_day -> calendario. Si mandó business_nth -> hábil.
+                if due_mode not in ("calendar", "business"):
+                    if business_nth_raw is not None:
+                        due_mode = "business"
+                    elif due_day_raw is not None:
+                        due_mode = "calendar"
+                    else:
+                        due_mode = "calendar"
+
+                _append_credit_bank_to_user(
+                    session,
+                    current_user,
+                    bank_str,
+                    due_mode=due_mode,
+                    due_day=due_day_raw if due_mode == "calendar" else None,
+                    business_nth=business_nth_raw if due_mode == "business" else None,
+                )
+                for e in _parse_credit_card_banks_from_stored(
+                    getattr(current_user, "credit_card_banks", None) or []
+                ):
+                    if e.name.strip().lower() == bank_str.strip().lower():
+                        bank_str = e.name
+                        break
+
         cc_bank = _validate_expense_credit_card(current_user, payment_method, bank_str)
 
         if payment_method != PaymentMethod.TARJETA_CREDITO or not cc_bank:
@@ -1344,9 +1448,6 @@ def get_stats(
     all_user_expenses = session.exec(
         select(Expense).where(Expense.user_id == current_user.id)
     ).all()
-    cfg_by_name = {
-        b.name: b for b in _parse_credit_card_banks_from_stored(current_user.credit_card_banks)
-    }
     cutoff_overrides = _cc_cutoff_overrides_map(session, current_user.id)
 
     def portion_for(e: Expense) -> float:
@@ -1359,7 +1460,7 @@ def get_stats(
             cy, cm = e.created_at.year, e.created_at.month
             return round(e.base_amount, 2) if (cy, cm) == (y, m) else 0.0
         first_y, first_m = _cc_first_installment_start_month(
-            e, cfg_by_name=cfg_by_name, cutoff_overrides=cutoff_overrides
+            e, cutoff_overrides=cutoff_overrides
         )
         per = e.base_amount / n
         for i in range(n):
@@ -1467,9 +1568,6 @@ def get_budget_summary(
     all_expenses = session.exec(
         select(Expense).where(Expense.user_id == current_user.id)
     ).all()
-    cfg_by_name = {
-        b.name: b for b in _parse_credit_card_banks_from_stored(current_user.credit_card_banks)
-    }
     cutoff_overrides = _cc_cutoff_overrides_map(session, current_user.id)
 
     def portion_for(e: Expense) -> float:
@@ -1482,7 +1580,7 @@ def get_budget_summary(
             cy, cm = e.created_at.year, e.created_at.month
             return round(e.base_amount, 2) if (cy, cm) == (year, month) else 0.0
         first_y, first_m = _cc_first_installment_start_month(
-            e, cfg_by_name=cfg_by_name, cutoff_overrides=cutoff_overrides
+            e, cutoff_overrides=cutoff_overrides
         )
         per = e.base_amount / n
         for i in range(n):

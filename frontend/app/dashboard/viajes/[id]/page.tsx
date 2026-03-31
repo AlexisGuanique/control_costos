@@ -22,6 +22,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 
 const CATEGORIES: ExpenseCategory[] = [
   "Comidas",
+  "Supermercado",
   "Delivery",
   "Salidas",
   "Viajes",
@@ -43,6 +44,7 @@ const CURRENCIES = ["ARS", "USD", "EUR"];
 
 const CATEGORY_COLORS: Record<string, string> = {
   Comidas:       "bg-emerald-500/15 text-emerald-300 border-emerald-500/20",
+  Supermercado:  "bg-green-500/15 text-green-300 border-green-500/20",
   Delivery:      "bg-lime-500/15 text-lime-300 border-lime-500/20",
   Salidas:       "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/20",
   Viajes:        "bg-sky-500/15 text-sky-300 border-sky-500/20",

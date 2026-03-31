@@ -15,6 +15,7 @@ import type { ExpenseStats, DollarRate } from "@/lib/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
   Comidas: "#10b981",
+  Supermercado: "#22c55e",
   Delivery: "#84cc16",
   Salidas: "#d946ef",
   Viajes: "#38bdf8",

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { PlusCircle, Save } from "lucide-react";
 import { createExpense, previewExpenseInBase, updateExpense } from "@/lib/api";
 import { useUser } from "@/lib/UserContext";
@@ -25,6 +26,7 @@ function formatMoney(amount: number, currency: string) {
 
 const CATEGORIES: ExpenseCategory[] = [
   "Comidas",
+  "Supermercado",
   "Delivery",
   "Salidas",
   "Viajes",
@@ -57,6 +59,38 @@ const PAYMENT_METHODS: PaymentMethod[] = [
   "Otro",
 ];
 
+function getExpenseFormDefaults(expenseToEdit: Expense | null | undefined) {
+  if (!expenseToEdit) {
+    return {
+      description: "",
+      amount: "",
+      currency: "ARS",
+      category: "Otro" as ExpenseCategory,
+      paymentMethod: "Otro" as PaymentMethod,
+      creditCardBank: "",
+      creditInstallments: "1",
+    };
+  }
+  return {
+    description: expenseToEdit.description,
+    amount: String(expenseToEdit.original_amount),
+    currency: expenseToEdit.original_currency,
+    category: expenseToEdit.category,
+    paymentMethod: (expenseToEdit.payment_method ?? "Otro") as PaymentMethod,
+    creditCardBank: expenseToEdit.credit_card_bank ?? "",
+    creditInstallments: String(expenseToEdit.credit_installments ?? 1),
+  };
+}
+
+function parseAmountInput(s: string): number {
+  const n = parseFloat(String(s).replace(",", "."));
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function amountsEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) < 1e-6;
+}
+
 interface Props {
   /** Gasto a editar; si no hay, modo alta. */
   expenseToEdit?: Expense | null;
@@ -76,13 +110,23 @@ export default function ExpenseForm({
   const isEdit = expenseToEdit != null;
   const { user } = useUser();
 
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("ARS");
-  const [category, setCategory] = useState<ExpenseCategory>("Otro");
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("Otro");
-  const [creditCardBank, setCreditCardBank] = useState("");
-  const [creditInstallments, setCreditInstallments] = useState("1");
+  const [description, setDescription] = useState(() =>
+    getExpenseFormDefaults(expenseToEdit).description,
+  );
+  const [amount, setAmount] = useState(() => getExpenseFormDefaults(expenseToEdit).amount);
+  const [currency, setCurrency] = useState(() => getExpenseFormDefaults(expenseToEdit).currency);
+  const [category, setCategory] = useState<ExpenseCategory>(
+    () => getExpenseFormDefaults(expenseToEdit).category,
+  );
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
+    () => getExpenseFormDefaults(expenseToEdit).paymentMethod,
+  );
+  const [creditCardBank, setCreditCardBank] = useState(
+    () => getExpenseFormDefaults(expenseToEdit).creditCardBank,
+  );
+  const [creditInstallments, setCreditInstallments] = useState(
+    () => getExpenseFormDefaults(expenseToEdit).creditInstallments,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [basePreview, setBasePreview] = useState<ExpenseBasePreview | null>(null);
@@ -92,34 +136,16 @@ export default function ExpenseForm({
   const creditBanks = normalizeCreditCardBanks(user?.credit_card_banks ?? []);
 
   useEffect(() => {
-    if (expenseToEdit) {
-      setDescription(expenseToEdit.description);
-      setAmount(String(expenseToEdit.original_amount));
-      setCurrency(expenseToEdit.original_currency);
-      setCategory(expenseToEdit.category);
-      setPaymentMethod(expenseToEdit.payment_method ?? "Otro");
-      setCreditCardBank(expenseToEdit.credit_card_bank ?? "");
-      setCreditInstallments(
-        String(expenseToEdit.credit_installments ?? 1)
-      );
-    } else {
-      setDescription("");
-      setAmount("");
-      setCurrency("ARS");
-      setCategory("Otro");
-      setPaymentMethod("Otro");
-      setCreditCardBank("");
-      setCreditInstallments("1");
-    }
+    const d = getExpenseFormDefaults(expenseToEdit);
+    setDescription(d.description);
+    setAmount(d.amount);
+    setCurrency(d.currency);
+    setCategory(d.category);
+    setPaymentMethod(d.paymentMethod);
+    setCreditCardBank(d.creditCardBank);
+    setCreditInstallments(d.creditInstallments);
     setError("");
   }, [expenseToEdit]);
-
-  useEffect(() => {
-    if (paymentMethod !== "Tarjeta de crédito") {
-      setCreditCardBank("");
-      setCreditInstallments("1");
-    }
-  }, [paymentMethod]);
 
   useEffect(() => {
     if (expenseToEdit) return;
@@ -171,7 +197,10 @@ export default function ExpenseForm({
       if (isEdit && expenseToEdit) {
         const patch: ExpenseUpdate = {};
         if (description.trim() !== expenseToEdit.description) patch.description = description.trim();
-        if (parseFloat(amount) !== expenseToEdit.original_amount) patch.original_amount = parseFloat(amount);
+        const amountNum = parseAmountInput(amount);
+        if (Number.isFinite(amountNum) && !amountsEqual(amountNum, expenseToEdit.original_amount)) {
+          patch.original_amount = amountNum;
+        }
         if (currency !== expenseToEdit.original_currency) patch.original_currency = currency;
         if (category !== expenseToEdit.category) patch.category = category;
         if (paymentMethod !== (expenseToEdit.payment_method ?? "Otro"))
@@ -200,10 +229,16 @@ export default function ExpenseForm({
           60,
           Math.max(1, parseInt(creditInstallments, 10) || 1)
         );
+        const createAmount = parseAmountInput(amount);
+        if (!Number.isFinite(createAmount) || createAmount <= 0) {
+          setError("Ingresá un monto válido");
+          setLoading(false);
+          return;
+        }
         const expense = await createExpense({
           description: description.trim(),
           category,
-          original_amount: parseFloat(amount),
+          original_amount: createAmount,
           original_currency: currency,
           payment_method: paymentMethod,
           ...(paymentMethod === "Tarjeta de crédito"
@@ -325,7 +360,14 @@ export default function ExpenseForm({
           </label>
           <select
             value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+            onChange={(e) => {
+              const m = e.target.value as PaymentMethod;
+              setPaymentMethod(m);
+              if (m !== "Tarjeta de crédito") {
+                setCreditCardBank("");
+                setCreditInstallments("1");
+              }
+            }}
             className="w-full rounded-xl border border-slate-600 bg-slate-700 px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {PAYMENT_METHODS.map((m) => (
@@ -349,6 +391,10 @@ export default function ExpenseForm({
                 className="w-full rounded-xl border border-slate-600 bg-slate-700 px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">Elegí un banco</option>
+                {creditCardBank.trim() &&
+                  !creditBanks.some((b) => b.name === creditCardBank.trim()) && (
+                    <option value={creditCardBank.trim()}>{creditCardBank.trim()} (guardado)</option>
+                  )}
                 {creditBanks.map((b) => (
                   <option key={b.name} value={b.name}>
                     {b.name}
@@ -357,16 +403,28 @@ export default function ExpenseForm({
               </select>
             ) : (
               <>
+                <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.07] px-3 py-3">
+                  <p className="text-xs font-semibold text-amber-200">
+                    Todavía no cargaste bancos con tarjeta
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+                    Agregalos en Configuración para elegir el banco de una lista y registrar la fecha de corte por
+                    mes (mejor para cuotas y Finanzas). Podés seguir cargando el gasto escribiendo el banco abajo.
+                  </p>
+                  <Link
+                    href="/dashboard/configuraciones"
+                    className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-amber-600 px-3 py-2 text-center text-xs font-semibold text-white transition hover:bg-amber-500 sm:w-auto"
+                  >
+                    Ir a Configuración — Bancos con tarjeta
+                  </Link>
+                </div>
                 <input
                   type="text"
                   value={creditCardBank}
                   onChange={(e) => setCreditCardBank(e.target.value)}
-                  placeholder="Opcional — o cargá bancos en Configuraciones"
+                  placeholder="Nombre del banco (ej. Galicia, Santander…)"
                   className="w-full rounded-xl border border-slate-600 bg-slate-700 px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <p className="mt-1.5 text-[11px] font-medium text-amber-400/90">
-                  Podés definir tus bancos en Configuraciones para elegir de una lista.
-                </p>
               </>
             )}
             <div className="mt-3">

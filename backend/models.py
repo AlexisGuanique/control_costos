@@ -13,6 +13,7 @@ def _enum_values(enum_cls: type[Enum]) -> list[str]:
 
 class ExpenseCategory(str, Enum):
     COMIDAS = "Comidas"
+    SUPERMERCADO = "Supermercado"
     VIAJES = "Viajes"
     SALIDAS = "Salidas"
     AUTO = "Auto"
@@ -58,20 +59,20 @@ class CreditCardBankEntry(SQLModel):
     )
     cut_mode: str = Field(
         default="none",
-        description='"none" (sin corte), "calendar" (día del mes) o "weekday" (N-ésimo día de semana hábil).',
+        description="Legado; siempre none. El corte mensual va en CreditCardCutoffOverride.",
     )
-    cut_day: Optional[int] = Field(default=None, ge=1, le=31)
+    cut_day: Optional[int] = Field(default=None, ge=1, le=31, description="Legado; no usado.")
     cut_weekday: Optional[int] = Field(
         default=None,
         ge=0,
         le=6,
-        description="Día de semana (0=lunes ... 6=domingo). Para 'weekday' se recomienda lun–vie.",
+        description="Legado; no usado.",
     )
     cut_weekday_nth: Optional[int] = Field(
         default=None,
         ge=1,
         le=5,
-        description="N-ésima ocurrencia del día de semana en el mes (1..5).",
+        description="Legado; no usado.",
     )
 
 

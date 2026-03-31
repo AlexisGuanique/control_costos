@@ -32,6 +32,10 @@ export interface DayOfMonthPickerProps {
   onChange: (value: string) => void;
   /** Mes inicial al abrir (se sincroniza al abrir el panel). */
   alignMonth: { year: number; month: number };
+  /**
+   * Si es true, no se puede pasar de mes en el panel (el mes viene de `alignMonth`, p. ej. selectors externos).
+   */
+  lockMonth?: boolean;
   triggerClassName?: string;
   disabled?: boolean;
   id?: string;
@@ -44,6 +48,7 @@ export default function DayOfMonthPicker({
   value,
   onChange,
   alignMonth,
+  lockMonth = false,
   triggerClassName = "",
   disabled = false,
   id,
@@ -167,38 +172,48 @@ export default function DayOfMonthPicker({
           width: panelPos.width,
         }}
       >
-        <div className="mb-2 flex items-center justify-between gap-1 border-b border-slate-800/80 pb-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              goPrevMonth();
-            }}
-            disabled={view.y <= MIN_Y && view.m <= 1}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:opacity-30"
-            aria-label="Mes anterior"
+        <div
+          className={`mb-2 flex items-center border-b border-slate-800/80 pb-2 ${lockMonth ? "justify-center" : "justify-between gap-1"}`}
+        >
+          {!lockMonth ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                goPrevMonth();
+              }}
+              disabled={view.y <= MIN_Y && view.m <= 1}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:opacity-30"
+              aria-label="Mes anterior"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          ) : null}
+          <div
+            className={`flex min-w-0 flex-col items-center gap-0.5 text-center ${lockMonth ? "w-full px-1" : "flex-1"}`}
           >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <div className="flex min-w-0 flex-1 flex-col items-center gap-0.5 text-center">
-            <div className="flex items-center gap-1 text-xs font-medium capitalize text-slate-200">
+            <div className="flex items-center justify-center gap-1 text-xs font-medium capitalize text-slate-200">
               <CalendarDays className="h-3.5 w-3.5 shrink-0 text-blue-400/90" aria-hidden />
               <span className="truncate">{monthTitle(view.y, view.m)}</span>
             </div>
-            <span className="text-[10px] text-slate-500">Elegí el día (cada mes)</span>
+            <span className="text-[10px] text-slate-500">
+              {lockMonth ? "Elegí el día de corte" : "Elegí el día (cada mes)"}
+            </span>
           </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              goNextMonth();
-            }}
-            disabled={view.y >= MAX_Y && view.m >= 12}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:opacity-30"
-            aria-label="Mes siguiente"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
+          {!lockMonth ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                goNextMonth();
+              }}
+              disabled={view.y >= MAX_Y && view.m >= 12}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:opacity-30"
+              aria-label="Mes siguiente"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          ) : null}
         </div>
 
         <button
