@@ -818,18 +818,21 @@ def _credit_card_month_rows_for_period(
         if not bank:
             continue
         n = max(1, int(e.credit_installments or 1))
-        if n <= 1:
-            continue
         first_y, first_m = _cc_first_installment_start_month(
             e, cutoff_overrides=cutoff_overrides
         )
-        per = e.base_amount / n
         portion = 0.0
-        for i in range(n):
-            y_m, m_m = _add_months(first_y, first_m, i)
-            if (y_m, m_m) == (year, month):
-                portion = round(per, 2)
-                break
+        if n <= 1:
+            # Un solo pago con tarjeta: imputar al mes del resumen según corte (no al mes de compra).
+            if (first_y, first_m) == (year, month):
+                portion = round(e.base_amount, 2)
+        else:
+            per = e.base_amount / n
+            for i in range(n):
+                y_m, m_m = _add_months(first_y, first_m, i)
+                if (y_m, m_m) == (year, month):
+                    portion = round(per, 2)
+                    break
         if portion <= 0:
             continue
         by_bank[bank] = round(by_bank.get(bank, 0.0) + portion, 2)
@@ -892,31 +895,45 @@ def _credit_card_breakdown(
         if not bank:
             continue
         n = max(1, int(e.credit_installments or 1))
-        if n <= 1:
-            continue
         sy, sm = e.created_at.year, e.created_at.month
         first_y, first_m = _cc_first_installment_start_month(
             e, cutoff_overrides=cutoff_overrides
         )
-        for i in range(n):
-            y_m, m_m = _add_months(first_y, first_m, i)
-            if (y_m, m_m) != (year, month):
-                continue
-            per = round(e.base_amount / n, 2)
-            idx = i + 1
-            remaining = n - idx
-            line = CreditCardPurchaseLine(
-                expense_id=e.id,
-                description=e.description,
-                bank=bank,
-                total_base=round(e.base_amount, 2),
-                installments=n,
-                installment_amount=per,
-                current_installment_index=idx,
-                installments_remaining_after=remaining,
-                purchase_date=e.created_at,
-            )
-            by_bank.setdefault(bank, []).append(line)
+        if n <= 1:
+            # Un solo pago: aparece solo en el mes del resumen (first_y/first_m).
+            if (first_y, first_m) == (year, month):
+                line = CreditCardPurchaseLine(
+                    expense_id=e.id,
+                    description=e.description,
+                    bank=bank,
+                    total_base=round(e.base_amount, 2),
+                    installments=1,
+                    installment_amount=round(e.base_amount, 2),
+                    current_installment_index=1,
+                    installments_remaining_after=0,
+                    purchase_date=e.created_at,
+                )
+                by_bank.setdefault(bank, []).append(line)
+        else:
+            for i in range(n):
+                y_m, m_m = _add_months(first_y, first_m, i)
+                if (y_m, m_m) != (year, month):
+                    continue
+                per = round(e.base_amount / n, 2)
+                idx = i + 1
+                remaining = n - idx
+                line = CreditCardPurchaseLine(
+                    expense_id=e.id,
+                    description=e.description,
+                    bank=bank,
+                    total_base=round(e.base_amount, 2),
+                    installments=n,
+                    installment_amount=per,
+                    current_installment_index=idx,
+                    installments_remaining_after=remaining,
+                    purchase_date=e.created_at,
+                )
+                by_bank.setdefault(bank, []).append(line)
 
     banks_out: List[CreditCardBankDetail] = []
     for bank in sorted(by_bank.keys(), key=lambda x: x.lower()):
@@ -1456,12 +1473,14 @@ def get_stats(
             return round(e.base_amount, 2) if (cy, cm) == (y, m) else 0.0
         bank_ok = bool((e.credit_card_bank or "").strip())
         n = max(1, int(e.credit_installments or 1))
-        if not bank_ok or n <= 1:
+        if not bank_ok:
             cy, cm = e.created_at.year, e.created_at.month
             return round(e.base_amount, 2) if (cy, cm) == (y, m) else 0.0
         first_y, first_m = _cc_first_installment_start_month(
             e, cutoff_overrides=cutoff_overrides
         )
+        if n <= 1:
+            return round(e.base_amount, 2) if (first_y, first_m) == (y, m) else 0.0
         per = e.base_amount / n
         for i in range(n):
             y_m, m_m = _add_months(first_y, first_m, i)
@@ -1576,12 +1595,14 @@ def get_budget_summary(
             return round(e.base_amount, 2) if (cy, cm) == (year, month) else 0.0
         bank_ok = bool((e.credit_card_bank or "").strip())
         n = max(1, int(e.credit_installments or 1))
-        if not bank_ok or n <= 1:
+        if not bank_ok:
             cy, cm = e.created_at.year, e.created_at.month
             return round(e.base_amount, 2) if (cy, cm) == (year, month) else 0.0
         first_y, first_m = _cc_first_installment_start_month(
             e, cutoff_overrides=cutoff_overrides
         )
+        if n <= 1:
+            return round(e.base_amount, 2) if (first_y, first_m) == (year, month) else 0.0
         per = e.base_amount / n
         for i in range(n):
             y_m, m_m = _add_months(first_y, first_m, i)
