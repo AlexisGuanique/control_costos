@@ -1,8 +1,18 @@
 export type ExpenseCategory =
-  | "Supermercado"
-  | "Transporte"
+  | "Comidas"
+  | "Viajes"
+  | "Salidas"
+  | "Auto"
+  | "Belleza"
+  | "Delivery"
+  | "Deporte"
+  | "Educación"
+  | "Familia"
+  | "Hogar"
+  | "Ropa"
+  | "Mascotas"
+  | "Regalos"
   | "Suscripciones"
-  | "Ocio"
   | "Salud"
   | "Otro";
 
@@ -32,6 +42,15 @@ export interface CreditCardBankEntry {
   cut_weekday: number | null;
   /** Si cut_mode es weekday: 1..4 (ej. 2do jueves). */
   cut_weekday_nth: number | null;
+}
+
+export interface CreditCardCutoffOverride {
+  id: number;
+  bank: string;
+  year: number;
+  month: number;
+  cut_date: string; // ISO date
+  created_at: string;
 }
 
 /** Normaliza respuestas viejas o mezcladas (solo nombre vs objeto completo). */

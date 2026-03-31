@@ -6,11 +6,12 @@ import {
   CheckCircle, AlertCircle, Mail, Pencil,
   CreditCard, X,
 } from "lucide-react";
-import { updateMe } from "@/lib/api";
+import { listCreditCardCutoffs, updateMe, upsertCreditCardCutoff } from "@/lib/api";
 import { useUser } from "@/lib/UserContext";
-import { normalizeCreditCardBanks, type CreditCardBankEntry } from "@/lib/types";
+import { normalizeCreditCardBanks, type CreditCardBankEntry, type CreditCardCutoffOverride } from "@/lib/types";
 import NthBusinessDaySelect from "@/components/NthBusinessDaySelect";
 import CutoffWeekdayPicker from "@/components/CutoffWeekdayPicker";
+import DayOfMonthPicker from "@/components/DayOfMonthPicker";
 
 type ToastType = "success" | "error";
 interface Toast { type: ToastType; message: string }
@@ -56,6 +57,12 @@ export default function ConfiguracionesPage() {
   const [editCutDay, setEditCutDay] = useState("");
   const [editCutWeekday, setEditCutWeekday] = useState("");
   const [editCutNth, setEditCutNth] = useState("");
+
+  const [cutoffYear, setCutoffYear] = useState<number>(new Date().getFullYear());
+  const [cutoffMonth, setCutoffMonth] = useState<number>(new Date().getMonth() + 1);
+  const [cutoffDay, setCutoffDay] = useState<string>("");
+  const [cutoffHistory, setCutoffHistory] = useState<CreditCardCutoffOverride[]>([]);
+  const [savingCutoff, setSavingCutoff] = useState(false);
 
   const creditBanks = normalizeCreditCardBanks(user?.credit_card_banks ?? []);
 
@@ -234,11 +241,59 @@ export default function ConfiguracionesPage() {
     setEditCutDay(b.cut_day != null ? String(b.cut_day) : "");
     setEditCutWeekday(b.cut_weekday != null ? String(b.cut_weekday) : "");
     setEditCutNth(b.cut_weekday_nth != null ? String(b.cut_weekday_nth) : "");
+
+    const now = new Date();
+    setCutoffYear(now.getFullYear());
+    setCutoffMonth(now.getMonth() + 1);
+    setCutoffDay("");
+    setCutoffHistory([]);
+    void listCreditCardCutoffs({ bank: b.name }).then(setCutoffHistory).catch(() => {});
   }
 
   function closeEditBank() {
     if (savingBanks) return;
     setEditBank(null);
+  }
+
+  async function handleSaveMonthlyCutoff() {
+    if (!editBank) return;
+    const d = cutoffDay ? parseInt(cutoffDay, 10) : NaN;
+    if (!Number.isFinite(d) || d < 1 || d > 31) {
+      showToast("error", "Elegí un día de corte (1–31).");
+      return;
+    }
+    const iso = `${cutoffYear}-${String(cutoffMonth).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    setSavingCutoff(true);
+    try {
+      await upsertCreditCardCutoff({
+        bank: editBank.name,
+        year: cutoffYear,
+        month: cutoffMonth,
+        cut_date: iso,
+      });
+      const fresh = await listCreditCardCutoffs({ bank: editBank.name });
+      setCutoffHistory(fresh);
+      showToast("success", "Corte mensual guardado.");
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Error al guardar el corte");
+    } finally {
+      setSavingCutoff(false);
+    }
+  }
+
+  async function handleDeleteMonthlyCutoff(y: number, m: number) {
+    if (!editBank) return;
+    setSavingCutoff(true);
+    try {
+      await upsertCreditCardCutoff({ bank: editBank.name, year: y, month: m, cut_date: null });
+      const fresh = await listCreditCardCutoffs({ bank: editBank.name });
+      setCutoffHistory(fresh);
+      showToast("success", "Corte mensual eliminado.");
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Error al eliminar el corte");
+    } finally {
+      setSavingCutoff(false);
+    }
   }
 
   async function handleSaveEditBank(e: React.FormEvent) {
@@ -633,6 +688,96 @@ export default function ConfiguracionesPage() {
                       )}
                     </div>
                   </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-700/60">
+                  <h4 className="text-sm font-semibold text-white">Corte mensual (historial)</h4>
+                  <p className="mt-1 text-xs text-slate-300 leading-relaxed">
+                    Si el corte real cambia mes a mes, cargalo acá. Este valor tiene prioridad sobre la “regla” de corte.
+                  </p>
+
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-[minmax(0,8rem)_minmax(0,8rem)_minmax(0,1fr)_auto] gap-2 items-end">
+                    <div className="min-w-0">
+                      <label className="block text-xs font-medium text-slate-400 mb-1.5">Año</label>
+                      <input
+                        type="number"
+                        min={2000}
+                        max={2100}
+                        value={cutoffYear}
+                        onChange={(e) => setCutoffYear(parseInt(e.target.value || String(new Date().getFullYear()), 10))}
+                        className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label className="block text-xs font-medium text-slate-400 mb-1.5">Mes</label>
+                      <select
+                        value={cutoffMonth}
+                        onChange={(e) => setCutoffMonth(parseInt(e.target.value, 10))}
+                        className="h-11 w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                      >
+                        {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="min-w-0">
+                      <label className="block text-xs font-medium text-slate-400 mb-1.5">Día de corte</label>
+                      <DayOfMonthPicker
+                        id="cc-monthly-cutoff-day"
+                        value={cutoffDay}
+                        onChange={setCutoffDay}
+                        alignMonth={{ year: cutoffYear, month: cutoffMonth }}
+                        triggerClassName="rounded-xl !ring-0 border border-slate-600 bg-slate-800/80 focus:ring-2 focus:ring-amber-500/40"
+                      />
+                    </div>
+                    <div className="flex sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={handleSaveMonthlyCutoff}
+                        disabled={savingBanks || savingCutoff}
+                        className="h-11 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold transition disabled:opacity-50"
+                      >
+                        {savingCutoff ? "Guardando…" : "Guardar corte"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {cutoffHistory.length > 0 ? (
+                    <ul className="mt-3 space-y-2">
+                      {cutoffHistory.slice(0, 12).map((r) => (
+                        <li
+                          key={r.id}
+                          className="flex items-center justify-between gap-2 rounded-xl border border-slate-700/60 bg-slate-800/40 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm text-slate-200">
+                              {String(r.month).padStart(2, "0")}/{r.year} ·{" "}
+                              <span className="font-semibold text-white">
+                                {new Date(r.cut_date).toLocaleDateString("es-AR")}
+                              </span>
+                            </p>
+                            <p className="text-[11px] text-slate-300">
+                              Guardado: {new Date(r.created_at).toLocaleString("es-AR")}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteMonthlyCutoff(r.year, r.month)}
+                            disabled={savingCutoff}
+                            className="shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-red-300 hover:text-white hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition disabled:opacity-50"
+                          >
+                            Eliminar
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-300">
+                      Todavía no hay cortes mensuales guardados para este banco.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">

@@ -1,18 +1,69 @@
 "use client";
 
-import { useState } from "react";
-import { Trash2, Pencil, Bot, ArrowRight, Calendar } from "lucide-react";
+import { useState, type ComponentType } from "react";
+import {
+  Trash2,
+  Pencil,
+  Bot,
+  ArrowRight,
+  Calendar,
+  Receipt,
+  Utensils,
+  Plane,
+  PartyPopper,
+  Car,
+  Sparkles,
+  Bike,
+  GraduationCap,
+  Users,
+  Home,
+  ShoppingBag,
+  PawPrint,
+  Gift,
+  Repeat,
+  HeartPulse,
+  Package,
+} from "lucide-react";
 import { deleteExpense } from "@/lib/api";
 import type { Expense } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
 const CATEGORY_COLORS: Record<string, { badge: string; dot: string }> = {
-  Supermercado:  { badge: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",  dot: "bg-emerald-400" },
-  Transporte:    { badge: "bg-blue-500/10 text-blue-400 border-blue-500/20",           dot: "bg-blue-400" },
+  Comidas:       { badge: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",  dot: "bg-emerald-400" },
+  Delivery:      { badge: "bg-lime-500/10 text-lime-300 border-lime-500/20",           dot: "bg-lime-400" },
+  Salidas:       { badge: "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/20",  dot: "bg-fuchsia-400" },
+  Viajes:        { badge: "bg-sky-500/10 text-sky-300 border-sky-500/20",              dot: "bg-sky-400" },
+  Auto:          { badge: "bg-amber-500/10 text-amber-300 border-amber-500/20",        dot: "bg-amber-400" },
+  Hogar:         { badge: "bg-teal-500/10 text-teal-300 border-teal-500/20",           dot: "bg-teal-400" },
+  Familia:       { badge: "bg-rose-500/10 text-rose-300 border-rose-500/20",           dot: "bg-rose-400" },
+  "Educación":   { badge: "bg-indigo-500/10 text-indigo-300 border-indigo-500/20",     dot: "bg-indigo-400" },
+  Deporte:       { badge: "bg-cyan-500/10 text-cyan-300 border-cyan-500/20",           dot: "bg-cyan-400" },
+  Belleza:       { badge: "bg-pink-500/10 text-pink-300 border-pink-500/20",           dot: "bg-pink-400" },
+  Ropa:          { badge: "bg-violet-500/10 text-violet-300 border-violet-500/20",     dot: "bg-violet-400" },
+  Mascotas:      { badge: "bg-orange-500/10 text-orange-300 border-orange-500/20",     dot: "bg-orange-400" },
+  Regalos:       { badge: "bg-red-500/10 text-red-300 border-red-500/20",              dot: "bg-red-400" },
   Suscripciones: { badge: "bg-purple-500/10 text-purple-400 border-purple-500/20",     dot: "bg-purple-400" },
-  Ocio:          { badge: "bg-orange-500/10 text-orange-400 border-orange-500/20",     dot: "bg-orange-400" },
   Salud:         { badge: "bg-red-500/10 text-red-400 border-red-500/20",              dot: "bg-red-400" },
   Otro:          { badge: "bg-slate-500/10 text-slate-400 border-slate-500/20",        dot: "bg-slate-400" },
+};
+
+const CATEGORY_ICON: Record<string, ComponentType<{ className?: string }>> = {
+  Comidas: Utensils,
+  Delivery: Package,
+  Salidas: PartyPopper,
+  Viajes: Plane,
+  Auto: Car,
+  Hogar: Home,
+  Familia: Users,
+  "Educación": GraduationCap,
+  Deporte: Bike,
+  Belleza: Sparkles,
+  Ropa: ShoppingBag,
+  Mascotas: PawPrint,
+  Regalos: Gift,
+  Suscripciones: Repeat,
+  Salud: HeartPulse,
+  Otro: Receipt,
 };
 
 function formatAmount(amount: number, currency: string) {
@@ -81,6 +132,10 @@ export default function ExpenseCard({ expense, baseCurrency, onDeleted, onEdit }
       <div className="flex flex-wrap items-center gap-2">
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${colors.badge}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
+          {(() => {
+            const Icon = CATEGORY_ICON[expense.category] ?? Receipt;
+            return <Icon className="w-3.5 h-3.5" />;
+          })()}
           {expense.category}
         </span>
         <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border border-amber-500/25 bg-amber-500/10 text-amber-200/90">

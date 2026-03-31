@@ -14,10 +14,20 @@ import { useUser } from "@/lib/UserContext";
 import type { ExpenseStats, DollarRate } from "@/lib/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Supermercado: "#10b981",
-  Transporte: "#3b82f6",
+  Comidas: "#10b981",
+  Delivery: "#84cc16",
+  Salidas: "#d946ef",
+  Viajes: "#38bdf8",
+  Auto: "#f59e0b",
+  Hogar: "#14b8a6",
+  Familia: "#fb7185",
+  "Educación": "#818cf8",
+  Deporte: "#22d3ee",
+  Belleza: "#f472b6",
+  Ropa: "#a78bfa",
+  Mascotas: "#fb923c",
+  Regalos: "#f87171",
   Suscripciones: "#a855f7",
-  Ocio: "#f59e0b",
   Salud: "#ef4444",
   Otro: "#64748b",
 };

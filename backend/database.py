@@ -171,6 +171,51 @@ def _sqlite_patch_extraincome_fx_cols() -> None:
         return
 
 
+def _sqlite_patch_expense_category_enum_legacy() -> None:
+    """
+    Migra categorías legacy guardadas como nombres de enum (SUPERMERCADO, TRANSPORTE, OCIO, etc.)
+    o valores antiguos ("Supermercado", "Transporte", "Ocio") a las nuevas categorías.
+    """
+    if "sqlite" not in DATABASE_URL:
+        return
+    from sqlalchemy import text
+
+    # Mapeo simple legacy -> nuevas categorías (ajustable).
+    mapping = {
+        "SUPERMERCADO": "Comidas",
+        "Supermercado": "Comidas",
+        "TRANSPORTE": "Auto",
+        "Transporte": "Auto",
+        "OCIO": "Salidas",
+        "Ocio": "Salidas",
+        "SUSCRIPCIONES": "Suscripciones",
+        "Suscripciones": "Suscripciones",
+        "SALUD": "Salud",
+        "Salud": "Salud",
+        "OTRO": "Otro",
+        "Otro": "Otro",
+    }
+
+    def apply_updates(table: str) -> None:
+        for old, new in mapping.items():
+            conn.execute(
+                text(f"UPDATE {table} SET category = :new WHERE category = :old"),
+                {"new": new, "old": old},
+            )
+
+    try:
+        with engine.begin() as conn:
+            # Solo si existen las tablas.
+            r = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+            tables = {row[0] for row in r}
+            if "expense" in tables:
+                apply_updates("expense")
+            if "tripexpense" in tables:
+                apply_updates("tripexpense")
+    except Exception:
+        return
+
+
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
     _sqlite_patch_monthlybudget_columns()
@@ -181,6 +226,7 @@ def create_db_and_tables() -> None:
     _sqlite_patch_fixedexpense_fx_cols()
     _sqlite_patch_extraincome_fx_cols()
     _sqlite_patch_expense_credit_installments()
+    _sqlite_patch_expense_category_enum_legacy()
 
 
 def get_session() -> Generator[Session, None, None]:

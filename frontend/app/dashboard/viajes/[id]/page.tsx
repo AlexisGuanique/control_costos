@@ -21,16 +21,41 @@ import AIChatWidget from "@/components/AIChatWidget";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
 const CATEGORIES: ExpenseCategory[] = [
-  "Supermercado", "Transporte", "Suscripciones", "Ocio", "Salud", "Otro",
+  "Comidas",
+  "Delivery",
+  "Salidas",
+  "Viajes",
+  "Auto",
+  "Hogar",
+  "Familia",
+  "Educación",
+  "Deporte",
+  "Belleza",
+  "Ropa",
+  "Mascotas",
+  "Regalos",
+  "Suscripciones",
+  "Salud",
+  "Otro",
 ];
 
 const CURRENCIES = ["ARS", "USD", "EUR"];
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Supermercado:  "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
-  Transporte:    "bg-blue-500/15 text-blue-400 border-blue-500/20",
+  Comidas:       "bg-emerald-500/15 text-emerald-300 border-emerald-500/20",
+  Delivery:      "bg-lime-500/15 text-lime-300 border-lime-500/20",
+  Salidas:       "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/20",
+  Viajes:        "bg-sky-500/15 text-sky-300 border-sky-500/20",
+  Auto:          "bg-amber-500/15 text-amber-300 border-amber-500/20",
+  Hogar:         "bg-teal-500/15 text-teal-300 border-teal-500/20",
+  Familia:       "bg-rose-500/15 text-rose-300 border-rose-500/20",
+  Educación:     "bg-indigo-500/15 text-indigo-300 border-indigo-500/20",
+  Deporte:       "bg-cyan-500/15 text-cyan-300 border-cyan-500/20",
+  Belleza:       "bg-pink-500/15 text-pink-300 border-pink-500/20",
+  Ropa:          "bg-violet-500/15 text-violet-300 border-violet-500/20",
+  Mascotas:      "bg-orange-500/15 text-orange-300 border-orange-500/20",
+  Regalos:       "bg-red-500/15 text-red-300 border-red-500/20",
   Suscripciones: "bg-purple-500/15 text-purple-400 border-purple-500/20",
-  Ocio:          "bg-yellow-500/15 text-yellow-400 border-yellow-500/20",
   Salud:         "bg-red-500/15 text-red-400 border-red-500/20",
   Otro:          "bg-slate-500/15 text-slate-400 border-slate-500/20",
 };

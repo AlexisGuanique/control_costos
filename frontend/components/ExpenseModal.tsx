@@ -31,9 +31,9 @@ export default function ExpenseModal({ onClose, expenseToEdit = null, onSaved }:
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-[100] flex min-h-[100dvh] items-end justify-center sm:items-center sm:p-4">
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 min-h-[100dvh] w-full bg-black/60 backdrop-blur-sm"
         onClick={onClose}
         aria-hidden
       />
@@ -65,7 +65,7 @@ export default function ExpenseModal({ onClose, expenseToEdit = null, onSaved }:
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <ExpenseForm
             key={expenseToEdit?.id ?? "new"}
             plain

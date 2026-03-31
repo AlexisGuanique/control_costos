@@ -6,16 +6,22 @@ from typing import Any, Optional
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
+
+_CATEGORIES_BLOCK = (
+    "Comidas, Viajes, Salidas, Auto, Belleza, Delivery, Deporte, Educación, "
+    "Familia, Hogar, Ropa, Mascotas, Regalos, Suscripciones, Salud, Otro"
+)
+
 SYSTEM_PROMPT = """Eres un experto contable argentino. Tu única función es analizar mensajes de gastos y extraer información estructurada.
 
 Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura exacta:
 {"description": "string", "original_amount": número_float, "original_currency": "string", "category": "string", "payment_method": "string", "credit_card_bank": "string o null", "credit_installments": número entero o null}
 
 Reglas obligatorias:
-- "description": descripción breve y clara del gasto (ej: "Supermercado Carrefour", "Netflix mensual")
+- "description": descripción breve y clara del gasto (ej: "Almuerzo", "Netflix mensual", "Uber", "Ropa")
 - "original_amount": monto numérico exacto (sin símbolos)
 - "original_currency": código ISO de 3 letras (ARS, USD, EUR). Si no se menciona moneda, usa ARS.
-- "category": SOLO una de estas opciones exactas: Supermercado, Transporte, Suscripciones, Ocio, Salud, Otro
+- "category": SOLO una de estas opciones exactas: """ + _CATEGORIES_BLOCK + """
 - "payment_method": SOLO una de estas opciones EXACTAS (copiá el texto tal cual): Efectivo, Transferencia, Tarjeta de crédito, Tarjeta de débito, Mercado Pago / QR, Otro. Inferilo del mensaje (ej: "en efectivo", "transferí", "con la visa", "débito", "mercado pago", "qr"). Si no se puede inferir, usa Otro.
 - "credit_card_bank": si payment_method es "Tarjeta de crédito" y el mensaje nombra un banco (Galicia, Santander, BBVA, Nación, Macro, etc.), poné el nombre corto del banco; si no aplica o no es tarjeta de crédito, null.
 - "credit_installments": si es tarjeta de crédito y el mensaje indica cuotas (ej: "en 6 cuotas", "12 cuotas sin interés"), el número entero; si no se menciona cuotas o no es tarjeta, null o 1.
@@ -73,7 +79,7 @@ Reglas para tarjeta de crédito y cuotas:
 Devolvé EXCLUSIVAMENTE un JSON válido con UNA de estas formas (sin markdown ni texto extra):
 
 A) Gasto NUEVO — cuando registra un gasto sin referirse a uno existente:
-{{"action":"create","data":{{"description":"...","original_amount":número,"original_currency":"ARS|USD|EUR","category":"Supermercado|Transporte|Suscripciones|Ocio|Salud|Otro","payment_method":"<uno exacto de la lista de medios>","credit_card_bank":null o string exacto de la lista de bancos,"credit_installments":null o entero 1-60}}}}
+{{"action":"create","data":{{"description":"...","original_amount":número,"original_currency":"ARS|USD|EUR","category":"Comidas|Viajes|Salidas|Auto|Belleza|Delivery|Deporte|Educación|Familia|Hogar|Ropa|Mascotas|Regalos|Suscripciones|Salud|Otro","payment_method":"<uno exacto de la lista de medios>","credit_card_bank":null o string exacto de la lista de bancos,"credit_installments":null o entero 1-60}}}}
 
 B) EDITAR un gasto existente — cuando pide modificar algo ya cargado:
 {{"action":"edit","expense_id":<entero id de la lista>,"patch":{{...solo campos que cambian: description, original_amount, original_currency, category, payment_method, credit_card_bank, credit_installments}}}}
@@ -90,7 +96,7 @@ Reglas para EDITAR y ELIMINAR:
 - Si hay varios candidatos igual de probables, usá clarify pidiendo que aclare el id o la descripción.
 - El patch (en edit) debe tener al menos un campo; no envíes patch vacío.
 
-Categorías de gasto: Supermercado, Transporte, Suscripciones, Ocio, Salud, Otro. Jerga argentina: lucas=miles, palo=millones, mangos=ARS, dólares/usd=USD, euros/EUR.
+Categorías de gasto: """ + _CATEGORIES_BLOCK + """. Jerga argentina: lucas=miles, palo=millones, mangos=ARS, dólares/usd=USD, euros/EUR.
 
 NO incluyas markdown ni backticks. SOLO el JSON."""
 
@@ -215,7 +221,7 @@ Estructura JSON obligatoria:
 {{"description": "string", "original_amount": número_float, "original_currency": "string", "category": "string", "paid_by": "string"}}
 
 Reglas:
-- "description", "original_amount", "original_currency", "category": igual que en gastos personales (category: Supermercado, Transporte, Suscripciones, Ocio, Salud, Otro)
+- "description", "original_amount", "original_currency", "category": igual que en gastos personales (category: Comidas, Viajes, Salidas, Auto, Belleza, Delivery, Deporte, Educación, Familia, Hogar, Ropa, Mascotas, Regalos, Suscripciones, Salud, Otro)
 - "paid_by": "yo" o uno de los nombres listados exactamente
 
 Jerga argentina: lucas=miles, palo/palos=millones, mangos=ARS, dólares/usd=USD, euros=eur.

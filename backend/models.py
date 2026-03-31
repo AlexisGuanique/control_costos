@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, List, Literal, Optional
 
@@ -12,10 +12,20 @@ def _enum_values(enum_cls: type[Enum]) -> list[str]:
 
 
 class ExpenseCategory(str, Enum):
-    SUPERMERCADO = "Supermercado"
-    TRANSPORTE = "Transporte"
+    COMIDAS = "Comidas"
+    VIAJES = "Viajes"
+    SALIDAS = "Salidas"
+    AUTO = "Auto"
+    BELLEZA = "Belleza"
+    DELIVERY = "Delivery"
+    DEPORTE = "Deporte"
+    EDUCACION = "Educación"
+    FAMILIA = "Familia"
+    HOGAR = "Hogar"
+    ROPA = "Ropa"
+    MASCOTAS = "Mascotas"
+    REGALOS = "Regalos"
     SUSCRIPCIONES = "Suscripciones"
-    OCIO = "Ocio"
     SALUD = "Salud"
     OTRO = "Otro"
 
@@ -88,7 +98,17 @@ class Expense(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: str = Field(foreign_key="user.id", index=True)
     description: str
-    category: ExpenseCategory = Field(default=ExpenseCategory.OTRO)
+    category: ExpenseCategory = Field(
+        default=ExpenseCategory.OTRO,
+        sa_column=Column(
+            SAEnum(
+                ExpenseCategory,
+                values_callable=_enum_values,
+                native_enum=False,
+                length=64,
+            )
+        ),
+    )
     original_amount: float
     original_currency: str = Field(default="ARS")
     exchange_rate_used: float = Field(default=1.0)
@@ -299,6 +319,26 @@ class CreditCardPeriodPaid(SQLModel, table=True):
     paid: bool = Field(default=False)
 
 
+class CreditCardCutoffOverride(SQLModel, table=True):
+    """
+    Override mensual de fecha de corte (cierre) por banco/tarjeta.
+    Permite que el corte sea variable mes a mes y deja historial.
+    """
+
+    __tablename__ = "creditcardcutoffoverride"
+    __table_args__ = (
+        UniqueConstraint("user_id", "year", "month", "bank", name="uq_cc_cutoff_period_bank"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(foreign_key="user.id", index=True)
+    year: int
+    month: int
+    bank: str = Field(max_length=128)
+    cut_date: date
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ExtraIncome(SQLModel, table=True):
     """Ingresos adicionales al sueldo, por mes calendario; amount en moneda base."""
 
@@ -409,6 +449,25 @@ class CreditCardPeriodPaidBody(SQLModel):
     paid: bool
 
 
+class CreditCardCutoffUpsertBody(SQLModel):
+    bank: str = Field(min_length=1, max_length=128)
+    year: int
+    month: int
+    cut_date: Optional[str] = Field(
+        default=None,
+        description='ISO date "YYYY-MM-DD". Si es null, elimina el override.',
+    )
+
+
+class CreditCardCutoffOverrideRead(SQLModel):
+    id: int
+    bank: str
+    year: int
+    month: int
+    cut_date: date
+    created_at: datetime
+
+
 class CreditCardPurchaseLine(SQLModel):
     expense_id: int
     description: str
@@ -494,7 +553,17 @@ class TripExpense(SQLModel, table=True):
     trip_id: int = Field(foreign_key="trip.id", index=True)
     paid_by_id: str = Field(foreign_key="user.id")
     description: str
-    category: ExpenseCategory = Field(default=ExpenseCategory.OTRO)
+    category: ExpenseCategory = Field(
+        default=ExpenseCategory.OTRO,
+        sa_column=Column(
+            SAEnum(
+                ExpenseCategory,
+                values_callable=_enum_values,
+                native_enum=False,
+                length=64,
+            )
+        ),
+    )
     original_amount: float
     original_currency: str = Field(default="ARS")
     exchange_rate_used: float = Field(default=1.0)

@@ -12,6 +12,7 @@ import {
   type ExpenseUpdate,
   type PaymentMethod,
 } from "@/lib/types";
+import CategorySelect from "@/components/CategorySelect";
 
 function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat("es-AR", {
@@ -23,10 +24,20 @@ function formatMoney(amount: number, currency: string) {
 }
 
 const CATEGORIES: ExpenseCategory[] = [
-  "Supermercado",
-  "Transporte",
+  "Comidas",
+  "Delivery",
+  "Salidas",
+  "Viajes",
+  "Auto",
+  "Hogar",
+  "Familia",
+  "Educación",
+  "Deporte",
+  "Belleza",
+  "Ropa",
+  "Mascotas",
+  "Regalos",
   "Suscripciones",
-  "Ocio",
   "Salud",
   "Otro",
 ];
@@ -248,7 +259,7 @@ export default function ExpenseForm({
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Ej: Supermercado Carrefour"
+            placeholder="Ej: Almuerzo, Uber, Ropa…"
             required
             className="w-full rounded-xl border border-slate-600 bg-slate-700 px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
@@ -305,17 +316,7 @@ export default function ExpenseForm({
           <label className="mb-1.5 block text-xs font-medium text-slate-400">
             Categoría
           </label>
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
-            className="w-full rounded-xl border border-slate-600 bg-slate-700 px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          <CategorySelect value={category} options={CATEGORIES} onChange={setCategory} />
         </div>
 
         <div className="w-full">
@@ -394,35 +395,43 @@ export default function ExpenseForm({
         </p>
       )}
 
-      <button
-        type="submit"
-        disabled={
-          loading ||
-          !description.trim() ||
-          !amount ||
-          (paymentMethod === "Tarjeta de crédito" &&
-            creditBanks.length > 0 &&
-            !creditCardBank.trim())
+      <div
+        className={
+          plain
+            ? "sticky bottom-0 -mx-4 mt-4 border-t border-slate-800/80 bg-[#1e293b] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3"
+            : "mt-4"
         }
-        className={`flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 px-4 text-sm font-semibold text-white transition-all hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-600 ${plain ? "mt-2" : "mt-4"}`}
       >
-        {loading ? (
-          <>
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-            {isEdit ? "Guardando…" : "Registrando…"}
-          </>
-        ) : isEdit ? (
-          <>
-            <Save className="h-4 w-4" />
-            Guardar cambios
-          </>
-        ) : (
-          <>
-            <PlusCircle className="h-4 w-4" />
-            Agregar gasto
-          </>
-        )}
-      </button>
+        <button
+          type="submit"
+          disabled={
+            loading ||
+            !description.trim() ||
+            !amount ||
+            (paymentMethod === "Tarjeta de crédito" &&
+              creditBanks.length > 0 &&
+              !creditCardBank.trim())
+          }
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 px-4 text-sm font-semibold text-white transition-all hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-600"
+        >
+          {loading ? (
+            <>
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              {isEdit ? "Guardando…" : "Registrando…"}
+            </>
+          ) : isEdit ? (
+            <>
+              <Save className="h-4 w-4" />
+              Guardar cambios
+            </>
+          ) : (
+            <>
+              <PlusCircle className="h-4 w-4" />
+              Agregar gasto
+            </>
+          )}
+        </button>
+      </div>
     </form>
   );
 }

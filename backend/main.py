@@ -37,6 +37,9 @@ from models import (
     CreditCardBankDetail,
     CreditCardBankMonthRow,
     CreditCardBreakdown,
+    CreditCardCutoffOverride,
+    CreditCardCutoffOverrideRead,
+    CreditCardCutoffUpsertBody,
     CreditCardPeriodPaid,
     CreditCardPeriodPaidBody,
     CreditCardPurchaseLine,
@@ -190,6 +193,47 @@ def _cut_date_for_month(cfg: Optional[CreditCardBankEntry], year: int, month: in
             return None
         return d
     return None
+
+
+def _cc_cutoff_overrides_map(session: Session, user_id: str) -> dict[tuple[str, int, int], date]:
+    """(bank, year, month) -> cut_date."""
+    rows = session.exec(
+        select(CreditCardCutoffOverride).where(CreditCardCutoffOverride.user_id == user_id)
+    ).all()
+    out: dict[tuple[str, int, int], date] = {}
+    for r in rows:
+        key = ((r.bank or "").strip(), int(r.year), int(r.month))
+        if not key[0]:
+            continue
+        out[key] = r.cut_date
+    return out
+
+
+def _cc_first_installment_start_month(
+    e: Expense,
+    *,
+    cfg_by_name: dict[str, CreditCardBankEntry],
+    cutoff_overrides: dict[tuple[str, int, int], date],
+) -> tuple[int, int]:
+    """
+    Determina (año, mes) del periodo de la primera cuota para una compra.
+    Regla:
+    - si compra <= corte => mes+1
+    - si compra >  corte => mes+2
+    Corte: override mensual si existe; si no, regla del banco; si no, legacy (mes+1).
+    """
+    sy, sm = e.created_at.year, e.created_at.month
+    bank = (e.credit_card_bank or "").strip()
+    if not bank:
+        return _add_months(sy, sm, 1)
+
+    cut = cutoff_overrides.get((bank, sy, sm))
+    if cut is None:
+        cfg = cfg_by_name.get(bank)
+        cut = _cut_date_for_month(cfg, sy, sm)
+
+    delta_first = 1 if cut is None or e.created_at.date() <= cut else 2
+    return _add_months(sy, sm, delta_first)
 
 
 def _parse_credit_card_banks_from_stored(raw: object) -> List[CreditCardBankEntry]:
@@ -742,16 +786,16 @@ def variable_portion_for_month(e: Expense, year: int, month: int) -> float:
         if (cy, cm) == (year, month):
             return round(e.base_amount, 2)
         return 0.0
+    # Legacy sin overrides: si no hay mapa de cortes mensual, usa corte "regla" del banco.
     per = e.base_amount / n
     sy, sm = e.created_at.year, e.created_at.month
     bank = (e.credit_card_bank or "").strip()
-    cfg = None
+    cfg_by_name: dict[str, CreditCardBankEntry] = {}
     if e.user and getattr(e.user, "credit_card_banks", None):
-        cfg_map = {
+        cfg_by_name = {
             b.name: b for b in _parse_credit_card_banks_from_stored(e.user.credit_card_banks)
         }
-        cfg = cfg_map.get(bank)
-    cut = _cut_date_for_month(cfg, sy, sm)
+    cut = _cut_date_for_month(cfg_by_name.get(bank), sy, sm) if bank else None
     delta_first = 1 if cut is None or e.created_at.date() <= cut else 2
     first_y, first_m = _add_months(sy, sm, delta_first)
     for i in range(n):
@@ -779,6 +823,7 @@ def _credit_card_month_rows_for_period(
     session: Session, user_id: str, year: int, month: int, user: User
 ) -> List[CreditCardBankMonthRow]:
     expenses = session.exec(select(Expense).where(Expense.user_id == user_id)).all()
+    cutoff_overrides = _cc_cutoff_overrides_map(session, user_id)
     by_bank: dict[str, float] = {}
     for e in expenses:
         if e.payment_method != PaymentMethod.TARJETA_CREDITO:
@@ -789,7 +834,19 @@ def _credit_card_month_rows_for_period(
         n = max(1, int(e.credit_installments or 1))
         if n <= 1:
             continue
-        portion = variable_portion_for_month(e, year, month)
+        cfg_by_name = {
+            b.name: b for b in _parse_credit_card_banks_from_stored(user.credit_card_banks)
+        }
+        first_y, first_m = _cc_first_installment_start_month(
+            e, cfg_by_name=cfg_by_name, cutoff_overrides=cutoff_overrides
+        )
+        per = e.base_amount / n
+        portion = 0.0
+        for i in range(n):
+            y_m, m_m = _add_months(first_y, first_m, i)
+            if (y_m, m_m) == (year, month):
+                portion = round(per, 2)
+                break
         if portion <= 0:
             continue
         by_bank[bank] = round(by_bank.get(bank, 0.0) + portion, 2)
@@ -843,13 +900,14 @@ def _credit_card_breakdown(
     session: Session, user_id: str, year: int, month: int, base_currency: str
 ) -> CreditCardBreakdown:
     expenses = session.exec(select(Expense).where(Expense.user_id == user_id)).all()
-    # Config de corte/vencimiento por banco (si existe en el usuario).
+    # Config de corte/vencimiento por banco + overrides mensuales (historial).
     user = session.get(User, user_id)
     cfg_by_name = (
         {b.name: b for b in _parse_credit_card_banks_from_stored(user.credit_card_banks)}
         if user and user.credit_card_banks
         else {}
     )
+    cutoff_overrides = _cc_cutoff_overrides_map(session, user_id)
     by_bank: dict[str, List[CreditCardPurchaseLine]] = {}
     for e in expenses:
         if e.payment_method != PaymentMethod.TARJETA_CREDITO:
@@ -861,10 +919,9 @@ def _credit_card_breakdown(
         if n <= 1:
             continue
         sy, sm = e.created_at.year, e.created_at.month
-        cfg = cfg_by_name.get(bank)
-        cut = _cut_date_for_month(cfg, sy, sm)
-        delta_first = 1 if cut is None or e.created_at.date() <= cut else 2
-        first_y, first_m = _add_months(sy, sm, delta_first)
+        first_y, first_m = _cc_first_installment_start_month(
+            e, cfg_by_name=cfg_by_name, cutoff_overrides=cutoff_overrides
+        )
         for i in range(n):
             y_m, m_m = _add_months(first_y, first_m, i)
             if (y_m, m_m) != (year, month):
@@ -1287,18 +1344,42 @@ def get_stats(
     all_user_expenses = session.exec(
         select(Expense).where(Expense.user_id == current_user.id)
     ).all()
+    cfg_by_name = {
+        b.name: b for b in _parse_credit_card_banks_from_stored(current_user.credit_card_banks)
+    }
+    cutoff_overrides = _cc_cutoff_overrides_map(session, current_user.id)
+
+    def portion_for(e: Expense) -> float:
+        if e.payment_method != PaymentMethod.TARJETA_CREDITO:
+            cy, cm = e.created_at.year, e.created_at.month
+            return round(e.base_amount, 2) if (cy, cm) == (y, m) else 0.0
+        bank_ok = bool((e.credit_card_bank or "").strip())
+        n = max(1, int(e.credit_installments or 1))
+        if not bank_ok or n <= 1:
+            cy, cm = e.created_at.year, e.created_at.month
+            return round(e.base_amount, 2) if (cy, cm) == (y, m) else 0.0
+        first_y, first_m = _cc_first_installment_start_month(
+            e, cfg_by_name=cfg_by_name, cutoff_overrides=cutoff_overrides
+        )
+        per = e.base_amount / n
+        for i in range(n):
+            y_m, m_m = _add_months(first_y, first_m, i)
+            if (y_m, m_m) == (y, m):
+                return round(per, 2)
+        return 0.0
+
     total_month = round(
-        sum(variable_portion_for_month(e, y, m) for e in all_user_expenses), 2
+        sum(portion_for(e) for e in all_user_expenses), 2
     )
     by_category: dict[str, float] = {}
     for expense in all_user_expenses:
-        portion = variable_portion_for_month(expense, y, m)
+        portion = portion_for(expense)
         if portion <= 0:
             continue
         cat = expense.category.value
         by_category[cat] = round(by_category.get(cat, 0) + portion, 2)
     count_nonzero = sum(
-        1 for e in all_user_expenses if variable_portion_for_month(e, y, m) > 0
+        1 for e in all_user_expenses if portion_for(e) > 0
     )
     return ExpenseStats(
         total_month_base=total_month,
@@ -1386,8 +1467,32 @@ def get_budget_summary(
     all_expenses = session.exec(
         select(Expense).where(Expense.user_id == current_user.id)
     ).all()
+    cfg_by_name = {
+        b.name: b for b in _parse_credit_card_banks_from_stored(current_user.credit_card_banks)
+    }
+    cutoff_overrides = _cc_cutoff_overrides_map(session, current_user.id)
+
+    def portion_for(e: Expense) -> float:
+        if e.payment_method != PaymentMethod.TARJETA_CREDITO:
+            cy, cm = e.created_at.year, e.created_at.month
+            return round(e.base_amount, 2) if (cy, cm) == (year, month) else 0.0
+        bank_ok = bool((e.credit_card_bank or "").strip())
+        n = max(1, int(e.credit_installments or 1))
+        if not bank_ok or n <= 1:
+            cy, cm = e.created_at.year, e.created_at.month
+            return round(e.base_amount, 2) if (cy, cm) == (year, month) else 0.0
+        first_y, first_m = _cc_first_installment_start_month(
+            e, cfg_by_name=cfg_by_name, cutoff_overrides=cutoff_overrides
+        )
+        per = e.base_amount / n
+        for i in range(n):
+            y_m, m_m = _add_months(first_y, first_m, i)
+            if (y_m, m_m) == (year, month):
+                return round(per, 2)
+        return 0.0
+
     variable_all = round(
-        sum(variable_portion_for_month(e, year, month) for e in all_expenses), 2
+        sum(portion_for(e) for e in all_expenses), 2
     )
     cc_rows = _credit_card_month_rows_for_period(
         session, current_user.id, year, month, current_user
@@ -1465,6 +1570,108 @@ def set_credit_card_period_paid(
                 month=body.month,
                 bank=bank,
                 paid=body.paid,
+            )
+        )
+    session.commit()
+
+
+@app.get("/finances/credit-cards/cutoffs", response_model=List[CreditCardCutoffOverrideRead])
+def list_credit_card_cutoffs(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    bank: Optional[str] = None,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+) -> List[CreditCardCutoffOverrideRead]:
+    if year is not None or month is not None:
+        if year is None or month is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="year y month deben venir juntos",
+            )
+        _validate_year_month(year, month)
+    q = select(CreditCardCutoffOverride).where(
+        CreditCardCutoffOverride.user_id == current_user.id
+    )
+    if bank:
+        b = bank.strip()
+        if b:
+            q = q.where(CreditCardCutoffOverride.bank == b)
+    if year is not None and month is not None:
+        q = q.where(CreditCardCutoffOverride.year == year, CreditCardCutoffOverride.month == month)
+    rows = session.exec(q.order_by(CreditCardCutoffOverride.year.desc(), CreditCardCutoffOverride.month.desc())).all()
+    return [
+        CreditCardCutoffOverrideRead(
+            id=r.id,
+            bank=r.bank,
+            year=r.year,
+            month=r.month,
+            cut_date=r.cut_date,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+@app.put("/finances/credit-cards/cutoffs", status_code=status.HTTP_204_NO_CONTENT)
+def upsert_credit_card_cutoff(
+    body: CreditCardCutoffUpsertBody,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> None:
+    _validate_year_month(body.year, body.month)
+    bank = body.bank.strip()
+    if not bank:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Indicá el banco",
+        )
+
+    existing = session.exec(
+        select(CreditCardCutoffOverride).where(
+            CreditCardCutoffOverride.user_id == current_user.id,
+            CreditCardCutoffOverride.year == body.year,
+            CreditCardCutoffOverride.month == body.month,
+            CreditCardCutoffOverride.bank == bank,
+        )
+    ).first()
+
+    if body.cut_date is None:
+        if existing:
+            session.delete(existing)
+            session.commit()
+        return
+
+    try:
+        parsed = datetime.strptime(body.cut_date.strip(), "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='cut_date debe tener formato "YYYY-MM-DD"',
+        ) from None
+
+    if parsed.year != body.year or parsed.month != body.month:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cut_date debe pertenecer al mismo año/mes indicado",
+        )
+
+    # Clamp por seguridad si el usuario manda un día fuera del mes.
+    last = calendar.monthrange(body.year, body.month)[1]
+    if parsed.day > last:
+        parsed = date(body.year, body.month, last)
+
+    if existing:
+        existing.cut_date = parsed
+        session.add(existing)
+    else:
+        session.add(
+            CreditCardCutoffOverride(
+                user_id=current_user.id,
+                year=body.year,
+                month=body.month,
+                bank=bank,
+                cut_date=parsed,
             )
         )
     session.commit()

@@ -4,6 +4,7 @@ import type {
   AuthToken,
   BudgetSummary,
   CreditCardBreakdown,
+  CreditCardCutoffOverride,
   CreditCardPeriodPaidBody,
   DollarRate,
   Expense,
@@ -216,6 +217,38 @@ export async function getCreditCardBreakdown(
     headers: authHeaders(),
   });
   return handleResponse<CreditCardBreakdown>(res);
+}
+
+export async function listCreditCardCutoffs(params?: {
+  bank?: string;
+  year?: number;
+  month?: number;
+}): Promise<CreditCardCutoffOverride[]> {
+  const q = new URLSearchParams();
+  if (params?.bank) q.set("bank", params.bank);
+  if (params?.year != null && params?.month != null) {
+    q.set("year", String(params.year));
+    q.set("month", String(params.month));
+  }
+  const qs = q.toString();
+  const res = await fetch(`${API_URL}/finances/credit-cards/cutoffs${qs ? `?${qs}` : ""}`, {
+    headers: authHeaders(),
+  });
+  return handleResponse<CreditCardCutoffOverride[]>(res);
+}
+
+export async function upsertCreditCardCutoff(body: {
+  bank: string;
+  year: number;
+  month: number;
+  cut_date: string | null;
+}): Promise<void> {
+  const res = await fetch(`${API_URL}/finances/credit-cards/cutoffs`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  return handleResponse<void>(res);
 }
 
 export async function setCreditCardPeriodPaid(body: CreditCardPeriodPaidBody): Promise<void> {

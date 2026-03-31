@@ -1,18 +1,68 @@
 "use client";
 
-import { useState } from "react";
-import { Trash2, ArrowUpDown, Bot, Pencil } from "lucide-react";
+import { useState, type ComponentType } from "react";
+import {
+  Trash2,
+  ArrowUpDown,
+  Bot,
+  Pencil,
+  Receipt,
+  Utensils,
+  Plane,
+  PartyPopper,
+  Car,
+  Sparkles,
+  Bike,
+  GraduationCap,
+  Users,
+  Home,
+  ShoppingBag,
+  PawPrint,
+  Gift,
+  Repeat,
+  HeartPulse,
+  Package,
+} from "lucide-react";
 import type { Expense } from "@/lib/types";
 import { deleteExpense } from "@/lib/api";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Supermercado: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-  Transporte: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  Comidas: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
+  Delivery: "bg-lime-500/10 text-lime-300 border-lime-500/20",
+  Salidas: "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/20",
+  Viajes: "bg-sky-500/10 text-sky-300 border-sky-500/20",
+  Auto: "bg-amber-500/10 text-amber-300 border-amber-500/20",
+  Hogar: "bg-teal-500/10 text-teal-300 border-teal-500/20",
+  Familia: "bg-rose-500/10 text-rose-300 border-rose-500/20",
+  Educación: "bg-indigo-500/10 text-indigo-300 border-indigo-500/20",
+  Deporte: "bg-cyan-500/10 text-cyan-300 border-cyan-500/20",
+  Belleza: "bg-pink-500/10 text-pink-300 border-pink-500/20",
+  Ropa: "bg-violet-500/10 text-violet-300 border-violet-500/20",
+  Mascotas: "bg-orange-500/10 text-orange-300 border-orange-500/20",
+  Regalos: "bg-red-500/10 text-red-300 border-red-500/20",
   Suscripciones: "bg-purple-500/10 text-purple-400 border-purple-500/20",
-  Ocio: "bg-orange-500/10 text-orange-400 border-orange-500/20",
   Salud: "bg-red-500/10 text-red-400 border-red-500/20",
   Otro: "bg-slate-500/10 text-slate-300 border-slate-500/20",
+};
+
+const CATEGORY_ICON: Record<string, ComponentType<{ className?: string }>> = {
+  Comidas: Utensils,
+  Delivery: Package,
+  Salidas: PartyPopper,
+  Viajes: Plane,
+  Auto: Car,
+  Hogar: Home,
+  Familia: Users,
+  "Educación": GraduationCap,
+  Deporte: Bike,
+  Belleza: Sparkles,
+  Ropa: ShoppingBag,
+  Mascotas: PawPrint,
+  Regalos: Gift,
+  Suscripciones: Repeat,
+  Salud: HeartPulse,
+  Otro: Receipt,
 };
 
 function formatCurrency(amount: number, currency: string): string {
@@ -113,6 +163,10 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                   <span
                     className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${CATEGORY_COLORS[expense.category] ?? CATEGORY_COLORS.Otro}`}
                   >
+                    {(() => {
+                      const Icon = CATEGORY_ICON[expense.category] ?? Receipt;
+                      return <Icon className="w-3.5 h-3.5 mr-1.5" />;
+                    })()}
                     {expense.category}
                   </span>
                 </td>
