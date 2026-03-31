@@ -378,7 +378,7 @@ export default function AIChatWidget({
               />
             ))}
             {loading && (
-              <div className="flex items-center gap-2 text-slate-400 text-sm">
+              <div className="flex items-center gap-2 text-slate-300 text-sm">
                 <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
                   <Bot className="w-4 h-4 text-blue-400" />
                 </div>
@@ -386,7 +386,7 @@ export default function AIChatWidget({
                   {[0, 1, 2].map((i) => (
                     <span
                       key={i}
-                      className="w-2 h-2 bg-slate-500 rounded-full animate-bounce"
+                      className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"
                       style={{ animationDelay: `${i * 150}ms` }}
                     />
                   ))}
@@ -501,7 +501,7 @@ function ChatBubble({
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs">
               <span className="text-slate-400">
                 {message.pendingDeleteExpense.category}
-                <span className="text-slate-500">
+                <span className="text-slate-300">
                   {" "}
                   · {message.pendingDeleteExpense.payment_method}
                   {message.pendingDeleteExpense.payment_method === "Tarjeta de crédito" &&
@@ -547,18 +547,18 @@ function ChatBubble({
               Gasto del viaje
             </p>
             <p className="font-medium text-white">{message.tripExpense.description}</p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               Pagó: <span className="text-slate-300">{message.tripExpense.paid_by_name}</span>
             </p>
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400">{message.tripExpense.category}</span>
+              <span className="text-slate-300">{message.tripExpense.category}</span>
               <span className="text-emerald-400 font-semibold">
                 {message.tripExpense.original_amount.toLocaleString("es-AR", {
                   maximumFractionDigits: 0,
                 })}{" "}
                 {message.tripExpense.original_currency}
                 {message.tripExpense.original_currency !== "ARS" && (
-                  <span className="text-slate-500 font-normal ml-1">
+                  <span className="text-slate-300 font-normal ml-1">
                     →{" "}
                     {message.tripExpense.base_amount.toLocaleString("es-AR", {
                       style: "currency",
@@ -579,7 +579,7 @@ function ChatBubble({
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs">
               <span className="text-slate-400">
                 {message.expense.category}
-                <span className="text-slate-500">
+                <span className="text-slate-300">
                   {" "}
                   · {message.expense.payment_method}
                   {message.expense.payment_method === "Tarjeta de crédito" &&

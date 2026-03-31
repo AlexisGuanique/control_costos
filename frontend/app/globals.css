@@ -9,7 +9,10 @@
   --card: #1e293b;
   --border: #334155;
   --text: #f1f5f9;
-  --muted: #94a3b8;
+  /* Texto secundario en tema oscuro: más legible que slate-400 */
+  --muted: #cbd5e1;
+  /* Texto "subtle" para ayudas pequeñas (antes se usaba slate-500/600 muy oscuro). */
+  --subtle: #94a3b8;
   --accent: #3b82f6;
 }
 
@@ -27,6 +30,15 @@ body {
   color: var(--text);
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .text-muted {
+    color: var(--muted);
+  }
+  .text-subtle {
+    color: var(--subtle);
+  }
 }
 
 ::-webkit-scrollbar {

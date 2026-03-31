@@ -1470,7 +1470,7 @@ export default function FinanzasPage() {
                     <h2 id="cc-modal-title" className="text-base font-semibold text-white">
                       Tarjetas de crédito
                     </h2>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-[11px] text-slate-300">
                       {monthLabel(periodYear, periodMonth)} · cuotas con vencimiento este mes
                     </p>
                   </div>
@@ -1478,7 +1478,7 @@ export default function FinanzasPage() {
                 <button
                   type="button"
                   onClick={() => setCcModalOpen(false)}
-                  className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-700/80 hover:text-white"
+                  className="rounded-lg p-2 text-slate-300 transition hover:bg-slate-700/80 hover:text-white"
                   aria-label="Cerrar"
                 >
                   <X className="h-5 w-5" />
@@ -1486,9 +1486,9 @@ export default function FinanzasPage() {
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5 sm:py-5 [-webkit-overflow-scrolling:touch]">
                 {ccLoading ? (
-                  <p className="text-sm text-slate-400">Cargando…</p>
+                  <p className="text-sm text-slate-300">Cargando…</p>
                 ) : !ccDetail || ccDetail.banks.length === 0 ? (
-                  <p className="text-sm leading-relaxed text-slate-400">
+                  <p className="text-sm leading-relaxed text-slate-300">
                     No hay cuotas de tarjeta registradas para este mes (o todas son en 1 pago).
                   </p>
                 ) : (
@@ -1510,12 +1510,12 @@ export default function FinanzasPage() {
                               className="rounded-xl bg-slate-800/50 p-3 ring-1 ring-slate-700/50 transition hover:ring-slate-600/60"
                             >
                               <p className="font-medium text-slate-100">{p.description}</p>
-                              <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
+                              <p className="mt-1.5 text-[11px] leading-relaxed text-slate-300">
                                 Cuota {p.current_installment_index} de {p.installments} ·{" "}
                                 {formatCurrency(p.installment_amount, ccDetail.base_currency)} este mes ·{" "}
                                 {p.installments_remaining_after} restantes después
                               </p>
-                              <p className="mt-1.5 text-[11px] text-slate-500">
+                              <p className="mt-1.5 text-[11px] text-slate-400">
                                 Total compra:{" "}
                                 {formatCurrency(p.total_base, ccDetail.base_currency)} ·{" "}
                                 {new Date(p.purchase_date).toLocaleDateString("es-AR")}

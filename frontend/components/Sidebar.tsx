@@ -71,7 +71,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: P
           {/* Close button (mobile only) */}
           <button
             onClick={onMobileClose}
-            className="lg:hidden ml-auto w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition"
+            className="lg:hidden ml-auto w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-white hover:bg-slate-700 transition"
           >
             <X className="w-4 h-4" />
           </button>
@@ -80,7 +80,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: P
         {/* Desktop collapse toggle */}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="hidden lg:flex absolute -right-3.5 top-6 w-7 h-7 bg-slate-800 border border-slate-600 rounded-full items-center justify-center text-slate-400 hover:text-white hover:border-blue-500 transition-all z-10 shadow-md"
+          className="hidden lg:flex absolute -right-3.5 top-6 w-7 h-7 bg-slate-800 border border-slate-600 rounded-full items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 transition-all z-10 shadow-md"
           title={collapsed ? "Expandir menú" : "Colapsar menú"}
         >
           {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
@@ -91,7 +91,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: P
         {/* Navigation */}
         <nav className="flex-1 px-2.5 space-y-1">
           {!collapsed && (
-            <p className="hidden lg:block text-[10px] font-semibold uppercase tracking-widest text-slate-500 px-3 pb-1">
+            <p className="hidden lg:block text-[10px] font-semibold uppercase tracking-widest text-slate-400 px-3 pb-1">
               Menú
             </p>
           )}
@@ -111,7 +111,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: P
                   transition-all duration-150 group
                   ${isActive
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20"
-                    : "text-slate-400 hover:bg-slate-700/50 hover:text-slate-100"
+                    : "text-slate-200 hover:bg-slate-700/50 hover:text-white"
                   }
                   ${collapsed ? "lg:justify-center" : ""}
                 `}
@@ -128,7 +128,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: P
           {user && !collapsed && (
             <div className="px-3 py-2.5 rounded-xl bg-slate-700/30 border border-slate-700/50 mb-1">
               <p className="text-sm font-semibold text-white truncate leading-tight">{user.full_name}</p>
-              <p className="text-xs text-slate-400 truncate mt-0.5">{user.email}</p>
+              <p className="text-xs text-slate-300 truncate mt-0.5">{user.email}</p>
               <div className="mt-1.5">
                 <span className="bg-blue-500/15 text-blue-400 text-[11px] px-2 py-0.5 rounded-md font-semibold border border-blue-500/20">
                   {user.base_currency}
@@ -153,7 +153,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: P
             title={collapsed ? "Cerrar sesión" : undefined}
             className={`
               w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm
-              text-slate-400 hover:bg-red-500/10 hover:text-red-400
+              text-slate-200 hover:bg-red-500/10 hover:text-red-300
               transition-all duration-150
               ${collapsed ? "lg:justify-center" : ""}
             `}

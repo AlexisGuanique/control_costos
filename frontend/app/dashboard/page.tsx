@@ -109,14 +109,14 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-          <p className="text-slate-400 text-sm mt-0.5">
+          <p className="text-slate-300 text-sm mt-0.5">
             Resumen financiero · {new Date().toLocaleDateString("es-AR", { month: "long", year: "numeric" })}
           </p>
         </div>
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="flex items-center gap-2 text-sm text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-xl transition-all disabled:opacity-50"
+          className="flex items-center gap-2 text-sm text-slate-200 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-xl transition-all disabled:opacity-50"
         >
           <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
           <span className="hidden sm:inline">Actualizar</span>
@@ -128,7 +128,7 @@ export default function DashboardPage() {
         <h2 className="font-semibold text-white mb-3 flex items-center gap-2">
           <DollarSign className="w-5 h-5 text-emerald-400" />
           Cotizaciones en vivo
-          <span className="ml-auto text-xs text-slate-500 font-normal flex items-center gap-1">
+          <span className="ml-auto text-xs text-slate-400 font-normal flex items-center gap-1">
             <Clock className="w-3 h-3" /> DolarAPI
           </span>
         </h2>
@@ -147,7 +147,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {rates.map((rate) => {
               const meta = RATE_META[rate.casa] ?? {
-                label: rate.nombre, color: "text-slate-400", bg: "bg-slate-700/40 border-slate-700",
+                label: rate.nombre, color: "text-slate-200", bg: "bg-slate-700/40 border-slate-700",
               };
               return (
                 <div
@@ -159,7 +159,7 @@ export default function DashboardPage() {
                   </p>
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-slate-500 flex items-center gap-0.5">
+                      <span className="text-[11px] text-slate-400 flex items-center gap-0.5">
                         <ArrowDownRight className="w-3 h-3 text-emerald-500" /> Compra
                       </span>
                       <span className="text-xs font-semibold text-slate-200">
@@ -167,7 +167,7 @@ export default function DashboardPage() {
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-slate-500 flex items-center gap-0.5">
+                      <span className="text-[11px] text-slate-400 flex items-center gap-0.5">
                         <ArrowUpRight className="w-3 h-3 text-red-400" /> Venta
                       </span>
                       <span className="text-sm font-bold text-white">
@@ -175,7 +175,7 @@ export default function DashboardPage() {
                       </span>
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-600 leading-none mt-auto">
+                  <p className="text-[10px] text-slate-400 leading-none mt-auto">
                     {timeAgo(rate.fechaActualizacion)}
                   </p>
                 </div>

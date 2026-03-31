@@ -12,7 +12,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   Suscripciones: "bg-purple-500/10 text-purple-400 border-purple-500/20",
   Ocio: "bg-orange-500/10 text-orange-400 border-orange-500/20",
   Salud: "bg-red-500/10 text-red-400 border-red-500/20",
-  Otro: "bg-slate-500/10 text-slate-400 border-slate-500/20",
+  Otro: "bg-slate-500/10 text-slate-300 border-slate-500/20",
 };
 
 function formatCurrency(amount: number, currency: string): string {
@@ -66,7 +66,7 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
 
   if (expenses.length === 0) {
     return (
-      <div className="text-center py-16 text-slate-500">
+      <div className="text-center py-16 text-slate-400">
         <p className="text-lg">No hay gastos registrados todavía.</p>
         <p className="text-sm mt-1">Agregá tu primer gasto arriba.</p>
       </div>
@@ -77,7 +77,7 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
     <div className="overflow-x-auto rounded-xl border border-slate-700">
       <table className="w-full text-sm">
         <thead>
-          <tr className="bg-slate-800/60 text-slate-400 uppercase text-xs tracking-wider">
+          <tr className="bg-slate-800/60 text-slate-300 uppercase text-xs tracking-wider">
             <th className="text-left px-4 py-3">Descripción</th>
             <th className="text-left px-4 py-3">Categoría</th>
             <th className="text-left px-4 py-3 hidden sm:table-cell">Pago</th>
@@ -128,14 +128,14 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-slate-300">
                   {formatCurrency(expense.original_amount, expense.original_currency)}{" "}
-                  <span className="text-slate-500 text-xs">
+                  <span className="text-slate-400 text-xs">
                     {expense.original_currency}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums font-semibold text-white">
                   {formatCurrency(expense.base_amount, baseCurrency)}
                   {isConverted && (
-                    <span className="block text-xs text-slate-500 font-normal">
+                    <span className="block text-xs text-slate-400 font-normal">
                       @ {expense.exchange_rate_used.toLocaleString("es-AR")}
                     </span>
                   )}
@@ -146,12 +146,12 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                       <Bot className="w-3 h-3" /> IA
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-xs text-slate-400 bg-slate-500/10 px-2 py-1 rounded-full border border-slate-500/20">
+                    <span className="inline-flex items-center gap-1 text-xs text-slate-300 bg-slate-500/10 px-2 py-1 rounded-full border border-slate-500/20">
                       <Pencil className="w-3 h-3" /> Manual
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
+                <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
                   {formatDate(expense.created_at)}
                 </td>
                 <td className="px-4 py-3">
@@ -160,7 +160,7 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                       <button
                         type="button"
                         onClick={() => onEdit(expense)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-300 hover:bg-blue-500/10 transition"
                         title="Editar gasto"
                       >
                         <Pencil className="w-3.5 h-3.5" />
@@ -170,11 +170,11 @@ export default function ExpenseTable({ expenses, baseCurrency, onDeleted, onEdit
                       type="button"
                       onClick={() => setDeleteTarget(expense)}
                       disabled={deletingId === expense.id}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 disabled:cursor-wait transition"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-300 hover:bg-red-500/10 disabled:cursor-wait transition"
                       title="Eliminar gasto"
                     >
                       {deletingId === expense.id ? (
-                        <span className="w-3.5 h-3.5 border-2 border-slate-500 border-t-red-400 rounded-full animate-spin block" />
+                        <span className="w-3.5 h-3.5 border-2 border-slate-400 border-t-red-300 rounded-full animate-spin block" />
                       ) : (
                         <Trash2 className="w-3.5 h-3.5" />
                       )}
