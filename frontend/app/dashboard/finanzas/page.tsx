@@ -367,12 +367,27 @@ export default function FinanzasPage() {
         salary: n,
         salary_currency: salaryCurrency,
       });
-      setSalaryInput("");
       await loadData();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Error al guardar el sueldo");
     } finally {
       setSavingSalary(false);
+    }
+  }
+
+  const currentMonthKey = `${periodYear}-${String(periodMonth).padStart(2, "0")}`;
+  const isSalaryEditingCurrentMonth = salaryForMonth === currentMonthKey;
+  const canPrefillFromSummary = isSalaryEditingCurrentMonth && summary != null;
+
+  function prefillSalaryFromSummary() {
+    if (!summary) return;
+    setSalaryForMonth(currentMonthKey);
+    if (summary.salary_usd != null) {
+      setSalaryCurrency("USD");
+      setSalaryInput(String(summary.salary_usd));
+    } else {
+      setSalaryCurrency("ARS");
+      setSalaryInput(String(summary.salary));
     }
   }
 
@@ -693,7 +708,19 @@ export default function FinanzasPage() {
           <div className="grid gap-8 lg:grid-cols-2 lg:gap-10">
             {/* Sueldo */}
             <div className="space-y-3">
-              <h3 className="text-xs font-medium uppercase tracking-wide text-slate-300">Sueldo</h3>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-xs font-medium uppercase tracking-wide text-slate-300">Sueldo</h3>
+                {canPrefillFromSummary && (
+                  <button
+                    type="button"
+                    onClick={prefillSalaryFromSummary}
+                    className="text-[11px] font-medium text-slate-300 hover:text-white underline decoration-slate-500/60 hover:decoration-slate-200 transition"
+                    title="Cargar el sueldo ya guardado para editarlo"
+                  >
+                    Editar sueldo guardado
+                  </button>
+                )}
+              </div>
               <div
                 className="inline-flex rounded-lg bg-slate-900 p-0.5 ring-1 ring-slate-800"
                 role="group"
@@ -775,7 +802,11 @@ export default function FinanzasPage() {
                   disabled={savingSalary}
                   className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50 sm:w-auto sm:px-6"
                 >
-                  {savingSalary ? "Guardando…" : "Guardar sueldo"}
+                  {savingSalary
+                    ? "Guardando…"
+                    : canPrefillFromSummary && summary?.salary != null
+                      ? "Actualizar sueldo"
+                      : "Guardar sueldo"}
                 </button>
               </form>
 
