@@ -1611,12 +1611,17 @@ def get_budget_summary(
     ).all()
     total_extra = round(sum(e.amount for e in extras), 2)
 
-    fixed_active = session.exec(
-        select(FixedExpense).where(
-            FixedExpense.user_id == current_user.id,
-            FixedExpense.is_active == True,  # noqa: E712
-        )
-    ).all()
+    _next_y, _next_m = _add_months(year, month, 1)
+    _period_cutoff = datetime(_next_y, _next_m, 1)
+    fixed_active = [
+        f for f in session.exec(
+            select(FixedExpense).where(
+                FixedExpense.user_id == current_user.id,
+                FixedExpense.is_active == True,  # noqa: E712
+            )
+        ).all()
+        if f.created_at < _period_cutoff
+    ]
     paid_ids = _paid_fixed_expense_ids(session, current_user.id, year, month)
     fixed_overrides = _fixed_overrides_map(session, current_user.id, year, month)
     total_fixed = round(
@@ -2077,6 +2082,12 @@ def list_fixed_expenses(
             .order_by(FixedExpense.created_at.asc())
         ).all()
     )
+
+    # Solo mostrar gastos fijos cuyo mes de creación es <= al período solicitado.
+    if year is not None and month is not None:
+        next_y, next_m = _add_months(year, month, 1)
+        period_cutoff = datetime(next_y, next_m, 1)
+        rows = [r for r in rows if r.created_at < period_cutoff]
 
     paid_ids: set[int] = set()
     if year is not None and month is not None:
