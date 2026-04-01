@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 _CATEGORIES_BLOCK = (
     "Comidas, Supermercado, Viajes, Salidas, Auto, Belleza, Delivery, Deporte, Educación, "
-    "Familia, Hogar, Ropa, Mascotas, Regalos, Suscripciones, Salud, Otro"
+    "Familia, Hogar, Ocio, Ropa, Mascotas, Regalos, Suscripciones, Salud, Transporte, Otro"
 )
 
 SYSTEM_PROMPT = """Eres un experto contable argentino. Tu única función es analizar mensajes de gastos y extraer información estructurada.
@@ -102,7 +102,7 @@ Reglas para tarjeta de crédito y cuotas:
 Devolvé EXCLUSIVAMENTE un JSON válido con UNA de estas formas (sin markdown ni texto extra):
 
 A) Gasto NUEVO — cuando registra un gasto sin referirse a uno existente:
-{{"action":"create","data":{{"description":"...","original_amount":número,"original_currency":"ARS|USD|EUR","category":"Comidas|Viajes|Salidas|Auto|Belleza|Delivery|Deporte|Educación|Familia|Hogar|Ropa|Mascotas|Regalos|Suscripciones|Salud|Otro","payment_method":"<uno exacto de la lista de medios>","credit_card_bank":null o string,"credit_installments":null o entero 1-60,"credit_card_due_mode":null o "calendar"|"business","credit_card_due_day":null o entero 1-31,"credit_card_business_nth":null o entero 1-23}}}}
+{{"action":"create","data":{{"description":"...","original_amount":número,"original_currency":"ARS|USD|EUR","category":"Comidas|Supermercado|Viajes|Salidas|Auto|Belleza|Delivery|Deporte|Educación|Familia|Hogar|Ocio|Ropa|Mascotas|Regalos|Suscripciones|Salud|Transporte|Otro","payment_method":"<uno exacto de la lista de medios>","credit_card_bank":null o string,"credit_installments":null o entero 1-60,"credit_card_due_mode":null o "calendar"|"business","credit_card_due_day":null o entero 1-31,"credit_card_business_nth":null o entero 1-23}}}}
 
 B) EDITAR un gasto existente — cuando pide modificar algo ya cargado:
 {{"action":"edit","expense_id":<entero id de la lista>,"patch":{{...solo campos que cambian: description, original_amount, original_currency, category, payment_method, credit_card_bank, credit_installments}}}}
@@ -246,7 +246,7 @@ Estructura JSON obligatoria:
 {{"description": "string", "original_amount": número_float, "original_currency": "string", "category": "string", "paid_by": "string"}}
 
 Reglas:
-- "description", "original_amount", "original_currency", "category": igual que en gastos personales (category: Comidas, Viajes, Salidas, Auto, Belleza, Delivery, Deporte, Educación, Familia, Hogar, Ropa, Mascotas, Regalos, Suscripciones, Salud, Otro)
+- "description", "original_amount", "original_currency", "category": igual que en gastos personales (category: Comidas, Supermercado, Viajes, Salidas, Auto, Belleza, Delivery, Deporte, Educación, Familia, Hogar, Ocio, Ropa, Mascotas, Regalos, Suscripciones, Salud, Transporte, Otro)
 - "paid_by": "yo" o uno de los nombres listados exactamente
 
 Jerga argentina: lucas=miles, palo/palos=millones, mangos=ARS, dólares/usd=USD, euros=eur.
