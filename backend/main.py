@@ -1810,9 +1810,9 @@ def get_credit_card_overview(
     expenses = session.exec(select(Expense).where(Expense.user_id == current_user.id)).all()
     cutoff_overrides = _cc_cutoff_overrides_map(session, current_user.id)
 
-    # {bank: {(y,m): amount_ars}}
+    # {bank: {(y,m): amount_ars_only}}  — solo la parte en pesos (excluye equiv ARS de USD)
     by_bank_months: dict[str, dict[tuple[int, int], float]] = {}
-    # {bank: {(y,m): amount_usd}}
+    # {bank: {(y,m): amount_usd}}  — monto original en dólares
     by_bank_months_usd: dict[str, dict[tuple[int, int], float]] = {}
     # {bank: [purchase_info]}
     by_bank_purchases: dict[str, list[dict]] = {}
@@ -1836,16 +1836,19 @@ def get_credit_card_overview(
             by_bank_months_usd[bank] = {}
             by_bank_purchases[bank] = []
 
-        # Acumular monto por mes (ARS y USD separados)
+        # Acumular monto por mes separando ARS-puro de USD
         for i in range(n):
             ym = _add_months(first_y, first_m, i)
             amt = e.base_amount if n == 1 else per
-            by_bank_months[bank][ym] = round(by_bank_months[bank].get(ym, 0.0) + amt, 2)
             if is_usd:
+                # Los gastos USD solo se acumulan en by_bank_months_usd (en dólares originales)
                 usd_amt = e.original_amount if n == 1 else (per_usd or 0)
                 by_bank_months_usd[bank][ym] = round(
                     by_bank_months_usd[bank].get(ym, 0.0) + usd_amt, 4
                 )
+            else:
+                # Gastos en pesos: acumular en by_bank_months
+                by_bank_months[bank][ym] = round(by_bank_months[bank].get(ym, 0.0) + amt, 2)
 
         # Cuotas restantes = installments cuyos meses >= hoy
         remaining_count = sum(
@@ -1881,37 +1884,42 @@ def get_credit_card_overview(
     paid_set: set[tuple[str, int, int]] = {(r.bank, r.year, r.month) for r in paid_records}
 
     banks_out: list[CreditCardBankOverview] = []
-    for bank in sorted(by_bank_months.keys(), key=lambda x: x.lower()):
+    # Unión de meses con actividad ARS o USD por banco
+    all_bank_keys: set[str] = set(by_bank_months.keys()) | set(by_bank_months_usd.keys())
+    for bank in sorted(all_bank_keys, key=lambda x: x.lower()):
         months_list: list[CreditCardOverviewMonthEntry] = []
         total_paid = 0.0
         total_remaining = 0.0
         total_paid_usd = 0.0
         total_remaining_usd = 0.0
+        ars_months = by_bank_months.get(bank, {})
         usd_months = by_bank_months_usd.get(bank, {})
 
-        for (y, m), amt in sorted(by_bank_months[bank].items()):
-            # ARS paid: check bank key "bank" (ARS row)
+        # Todos los meses con actividad (ARS o USD)
+        all_ym = sorted(set(ars_months.keys()) | set(usd_months.keys()))
+        for (y, m) in all_ym:
+            ars_amt = ars_months.get((y, m), 0.0)
+            usd_amt = usd_months.get((y, m))
+            # ARS paid: banco puro; USD paid: banco__USD
             ars_paid = (bank, y, m) in paid_set
-            # USD paid: check bank key "bank__USD" (USD row)
             usd_paid = (f"{bank}__USD", y, m) in paid_set
-            amount_usd = usd_months.get((y, m))
 
-            # Month paid = ARS paid (primary; USD tracked separately below)
             months_list.append(
                 CreditCardOverviewMonthEntry(
-                    year=y, month=m, amount=amt, paid=ars_paid,
-                    amount_usd=round(amount_usd, 2) if amount_usd else None,
+                    year=y, month=m, amount=ars_amt, paid=ars_paid,
+                    amount_usd=round(usd_amt, 2) if usd_amt else None,
                 )
             )
-            if ars_paid:
-                total_paid += amt
-            else:
-                total_remaining += amt
-            if amount_usd:
-                if usd_paid:
-                    total_paid_usd += amount_usd
+            if ars_amt:
+                if ars_paid:
+                    total_paid += ars_amt
                 else:
-                    total_remaining_usd += amount_usd
+                    total_remaining += ars_amt
+            if usd_amt:
+                if usd_paid:
+                    total_paid_usd += usd_amt
+                else:
+                    total_remaining_usd += usd_amt
 
         # Solo incluir compras activas (con cuotas en meses >= hoy)
         active = [
