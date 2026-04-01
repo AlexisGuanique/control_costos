@@ -32,11 +32,13 @@ const CATEGORIES: ExpenseCategory[] = [
   "Educación",
   "Deporte",
   "Belleza",
+  "Ocio",
   "Ropa",
   "Mascotas",
   "Regalos",
   "Suscripciones",
   "Salud",
+  "Transporte",
   "Otro",
 ];
 
@@ -54,11 +56,13 @@ const CATEGORY_COLORS: Record<string, string> = {
   Educación:     "bg-indigo-500/15 text-indigo-300 border-indigo-500/20",
   Deporte:       "bg-cyan-500/15 text-cyan-300 border-cyan-500/20",
   Belleza:       "bg-pink-500/15 text-pink-300 border-pink-500/20",
+  Ocio:          "bg-yellow-500/15 text-yellow-300 border-yellow-500/20",
   Ropa:          "bg-violet-500/15 text-violet-300 border-violet-500/20",
   Mascotas:      "bg-orange-500/15 text-orange-300 border-orange-500/20",
   Regalos:       "bg-red-500/15 text-red-300 border-red-500/20",
   Suscripciones: "bg-purple-500/15 text-purple-400 border-purple-500/20",
   Salud:         "bg-red-500/15 text-red-400 border-red-500/20",
+  Transporte:    "bg-blue-500/15 text-blue-300 border-blue-500/20",
   Otro:          "bg-slate-500/15 text-slate-400 border-slate-500/20",
 };
 

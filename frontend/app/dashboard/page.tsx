@@ -30,11 +30,13 @@ const CATEGORY_COLORS: Record<string, string> = {
   "Educación": "#818cf8",
   Deporte: "#22d3ee",
   Belleza: "#f472b6",
+  Ocio: "#eab308",
   Ropa: "#a78bfa",
   Mascotas: "#fb923c",
   Regalos: "#f87171",
   Suscripciones: "#a855f7",
   Salud: "#ef4444",
+  Transporte: "#3b82f6",
   Otro: "#64748b",
 };
 

@@ -23,11 +23,13 @@ class ExpenseCategory(str, Enum):
     EDUCACION = "Educación"
     FAMILIA = "Familia"
     HOGAR = "Hogar"
+    OCIO = "Ocio"
     ROPA = "Ropa"
     MASCOTAS = "Mascotas"
     REGALOS = "Regalos"
     SUSCRIPCIONES = "Suscripciones"
     SALUD = "Salud"
+    TRANSPORTE = "Transporte"
     OTRO = "Otro"
 
 

@@ -10,11 +10,13 @@ export type ExpenseCategory =
   | "Educación"
   | "Familia"
   | "Hogar"
+  | "Ocio"
   | "Ropa"
   | "Mascotas"
   | "Regalos"
   | "Suscripciones"
   | "Salud"
+  | "Transporte"
   | "Otro";
 
 export type ExpenseSource = "Manual" | "WebChat";

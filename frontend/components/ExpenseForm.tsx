@@ -38,11 +38,13 @@ const CATEGORIES: ExpenseCategory[] = [
   "Educación",
   "Deporte",
   "Belleza",
+  "Ocio",
   "Ropa",
   "Mascotas",
   "Regalos",
   "Suscripciones",
   "Salud",
+  "Transporte",
   "Otro",
 ];
 

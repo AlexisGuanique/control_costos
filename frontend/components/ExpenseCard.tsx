@@ -24,6 +24,8 @@ import {
   Repeat,
   HeartPulse,
   Package,
+  Gamepad2,
+  Bus,
 } from "lucide-react";
 import { deleteExpense } from "@/lib/api";
 import { paymentMethodFullLabel } from "@/lib/expenseDisplay";
@@ -42,11 +44,13 @@ const CATEGORY_COLORS: Record<string, { badge: string; dot: string }> = {
   "Educación":   { badge: "bg-indigo-500/10 text-indigo-300 border-indigo-500/20",     dot: "bg-indigo-400" },
   Deporte:       { badge: "bg-cyan-500/10 text-cyan-300 border-cyan-500/20",           dot: "bg-cyan-400" },
   Belleza:       { badge: "bg-pink-500/10 text-pink-300 border-pink-500/20",           dot: "bg-pink-400" },
+  Ocio:          { badge: "bg-yellow-500/10 text-yellow-300 border-yellow-500/20",     dot: "bg-yellow-400" },
   Ropa:          { badge: "bg-violet-500/10 text-violet-300 border-violet-500/20",     dot: "bg-violet-400" },
   Mascotas:      { badge: "bg-orange-500/10 text-orange-300 border-orange-500/20",     dot: "bg-orange-400" },
   Regalos:       { badge: "bg-red-500/10 text-red-300 border-red-500/20",              dot: "bg-red-400" },
   Suscripciones: { badge: "bg-purple-500/10 text-purple-400 border-purple-500/20",     dot: "bg-purple-400" },
   Salud:         { badge: "bg-red-500/10 text-red-400 border-red-500/20",              dot: "bg-red-400" },
+  Transporte:    { badge: "bg-blue-500/10 text-blue-300 border-blue-500/20",           dot: "bg-blue-400" },
   Otro:          { badge: "bg-slate-500/10 text-slate-400 border-slate-500/20",        dot: "bg-slate-400" },
 };
 
@@ -62,11 +66,13 @@ const CATEGORY_ICON: Record<string, ComponentType<{ className?: string }>> = {
   "Educación": GraduationCap,
   Deporte: Bike,
   Belleza: Sparkles,
+  Ocio: Gamepad2,
   Ropa: ShoppingBag,
   Mascotas: PawPrint,
   Regalos: Gift,
   Suscripciones: Repeat,
   Salud: HeartPulse,
+  Transporte: Bus,
   Otro: Receipt,
 };
 
