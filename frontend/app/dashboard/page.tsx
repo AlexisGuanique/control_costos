@@ -9,13 +9,13 @@ import {
   Receipt, RefreshCw, BarChart3, TrendingUp, TrendingDown,
   DollarSign, ArrowUpRight, ArrowDownRight, Clock,
   Wallet, CreditCard, ChevronDown, ChevronRight, ChevronLeft,
-  AlertTriangle, CheckCircle2, X,
+  AlertTriangle, CheckCircle2, X, Tag,
 } from "lucide-react";
-import { getStats, getRates, getBudgetSummary, getCreditCardOverview } from "@/lib/api";
+import { getStats, getRates, getBudgetSummary, getCreditCardOverview, listExpenses } from "@/lib/api";
 import { useUser } from "@/lib/UserContext";
 import type {
   ExpenseStats, DollarRate, BudgetSummary,
-  CreditCardBankOverview, CreditCardOverviewResponse,
+  CreditCardBankOverview, CreditCardOverviewResponse, Expense,
 } from "@/lib/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -80,6 +80,105 @@ function fmtCurrency(n: number, currency: string) {
   } catch {
     return `${currency} ${n.toLocaleString("es-AR")}`;
   }
+}
+
+// ─── CategoryDetailModal ──────────────────────────────────────────────────────
+
+const TOOLTIP_STYLE = {
+  backgroundColor: "#1e293b",
+  border: "1px solid #334155",
+  borderRadius: "12px",
+  color: "#f1f5f9",
+};
+const TOOLTIP_LABEL_STYLE = { color: "#94a3b8", fontWeight: 600, marginBottom: 2 };
+const TOOLTIP_ITEM_STYLE = { color: "#f1f5f9" };
+
+function CategoryDetailModal({
+  category, expenses, currency, onClose,
+}: {
+  category: string;
+  expenses: Expense[];
+  currency: string;
+  onClose: () => void;
+}) {
+  const color = CATEGORY_COLORS[category] ?? "#64748b";
+  const total = expenses.reduce((s, e) => s + e.base_amount, 0);
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-end justify-center sm:items-center sm:p-4">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/65 backdrop-blur-[2px]"
+        aria-label="Cerrar"
+        onClick={onClose}
+      />
+      <div
+        className="relative z-10 flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-slate-700 bg-[#1e293b] shadow-2xl sm:rounded-2xl"
+        role="dialog"
+        aria-modal="true"
+      >
+        {/* Header */}
+        <div className="flex shrink-0 items-center gap-3 border-b border-slate-800/80 px-4 py-3.5">
+          <div
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+            style={{ backgroundColor: `${color}22` }}
+          >
+            <Tag className="h-4 w-4" style={{ color }} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold text-white">{category}</h2>
+            <p className="text-xs text-slate-400">
+              {expenses.length} gasto{expenses.length !== 1 ? "s" : ""}
+              {" · "}
+              Total: <span className="font-semibold text-slate-300">{fmtCurrency(total, currency)}</span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition"
+            aria-label="Cerrar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* List */}
+        <div className="min-h-0 flex-1 overflow-y-auto divide-y divide-slate-800/60">
+          {expenses.length === 0 ? (
+            <p className="px-5 py-8 text-center text-sm text-slate-500">Sin gastos en esta categoría.</p>
+          ) : (
+            expenses.map((e) => {
+              const isUSD = e.original_currency !== "ARS" && e.original_currency !== currency;
+              return (
+                <div key={e.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 transition">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-slate-200 truncate">{e.description}</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {new Date(e.created_at).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" })}
+                      {e.payment_method && (
+                        <span className="ml-1.5 text-slate-600">· {e.payment_method}</span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm font-semibold text-slate-200 tabular-nums">
+                      {fmtCurrency(e.base_amount, currency)}
+                    </p>
+                    {isUSD && (
+                      <p className="text-[11px] text-orange-300/70 tabular-nums">
+                        {e.original_currency} {e.original_amount.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ─── CreditCardBankWidget + Modal ────────────────────────────────────────────
@@ -554,6 +653,9 @@ export default function DashboardPage() {
   const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
   const [ccOverview, setCcOverview] = useState<CreditCardOverviewResponse | null>(null);
   const [selectedBankOverview, setSelectedBankOverview] = useState<CreditCardBankOverview | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [categoryExpenses, setCategoryExpenses] = useState<Expense[]>([]);
+  const [loadingCategoryModal, setLoadingCategoryModal] = useState(false);
   const [loadingStats, setLoadingStats] = useState(true);
   const [loadingRates, setLoadingRates] = useState(true);
   const [loadingBudget, setLoadingBudget] = useState(true);
@@ -622,6 +724,19 @@ export default function DashboardPage() {
     if (m < 1)  { m = 12; y -= 1; }
     setPeriodYear(y);
     setPeriodMonth(m);
+  }
+
+  async function handleCategoryClick(categoryName: string) {
+    setSelectedCategory(categoryName);
+    setLoadingCategoryModal(true);
+    try {
+      const all = await listExpenses(500, 0, periodYear, periodMonth);
+      setCategoryExpenses(all.filter((e) => e.category === categoryName));
+    } catch {
+      setCategoryExpenses([]);
+    } finally {
+      setLoadingCategoryModal(false);
+    }
   }
 
   const pieData = stats
@@ -851,6 +966,25 @@ export default function DashboardPage() {
         />
       )}
 
+      {/* Modal de detalle de categoría */}
+      {selectedCategory && (
+        loadingCategoryModal ? (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/65 backdrop-blur-[2px]">
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-8 w-8 rounded-full border-2 border-blue-500/30 border-t-blue-400 animate-spin" />
+              <p className="text-sm text-slate-400">Cargando gastos…</p>
+            </div>
+          </div>
+        ) : (
+          <CategoryDetailModal
+            category={selectedCategory}
+            expenses={categoryExpenses}
+            currency={baseCurrency}
+            onClose={() => { setSelectedCategory(null); setCategoryExpenses([]); }}
+          />
+        )
+      )}
+
       {/* ── Gráficos ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Pie chart */}
@@ -860,20 +994,35 @@ export default function DashboardPage() {
             Distribución por categoría
           </h2>
           {pieData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
-                <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={3} dataKey="value">
-                  {pieData.map((entry) => (
-                    <Cell key={entry.name} fill={CATEGORY_COLORS[entry.name] ?? "#64748b"} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(v: number) => [fmtCurrency(v, baseCurrency), "Total"]}
-                  contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", borderRadius: "12px", color: "#f1f5f9" }}
-                />
-                <Legend formatter={(v) => <span style={{ color: "#94a3b8", fontSize: "12px" }}>{v}</span>} />
-              </PieChart>
-            </ResponsiveContainer>
+            <>
+              <p className="mb-2 text-[11px] text-slate-500 text-right">Clic en una porción para ver el detalle</p>
+              <ResponsiveContainer width="100%" height={260}>
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={100}
+                    paddingAngle={3}
+                    dataKey="value"
+                    onClick={(data) => handleCategoryClick(data.name)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    {pieData.map((entry) => (
+                      <Cell key={entry.name} fill={CATEGORY_COLORS[entry.name] ?? "#64748b"} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(v: number) => [fmtCurrency(v, baseCurrency), "Total"]}
+                    contentStyle={TOOLTIP_STYLE}
+                    labelStyle={TOOLTIP_LABEL_STYLE}
+                    itemStyle={TOOLTIP_ITEM_STYLE}
+                  />
+                  <Legend formatter={(v) => <span style={{ color: "#94a3b8", fontSize: "12px" }}>{v}</span>} />
+                </PieChart>
+              </ResponsiveContainer>
+            </>
           ) : (
             <EmptyChart />
           )}
@@ -886,33 +1035,43 @@ export default function DashboardPage() {
             Gasto por categoría ({baseCurrency})
           </h2>
           {barData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={barData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                <XAxis
-                  dataKey="name"
-                  tick={{ fill: "#94a3b8", fontSize: 11 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                  tick={{ fill: "#94a3b8", fontSize: 11 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  formatter={(v: number) => [fmtCurrency(v, baseCurrency), "Total"]}
-                  contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", borderRadius: "12px", color: "#f1f5f9" }}
-                  cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                />
-                <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                  {barData.map((entry) => (
-                    <Cell key={entry.name} fill={CATEGORY_COLORS[entry.name] ?? "#64748b"} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <>
+              <p className="mb-2 text-[11px] text-slate-500 text-right">Clic en una barra para ver el detalle</p>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart
+                  data={barData}
+                  margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
+                  onClick={(data) => { if (data?.activePayload?.[0]) handleCategoryClick(data.activePayload[0].payload.name); }}
+                  style={{ cursor: "pointer" }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: "#94a3b8", fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                    tick={{ fill: "#94a3b8", fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    formatter={(v: number) => [fmtCurrency(v, baseCurrency), "Total"]}
+                    contentStyle={TOOLTIP_STYLE}
+                    labelStyle={TOOLTIP_LABEL_STYLE}
+                    itemStyle={TOOLTIP_ITEM_STYLE}
+                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                  />
+                  <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                    {barData.map((entry) => (
+                      <Cell key={entry.name} fill={CATEGORY_COLORS[entry.name] ?? "#64748b"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </>
           ) : (
             <EmptyChart />
           )}
