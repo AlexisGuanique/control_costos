@@ -6,7 +6,7 @@ import {
   CheckCircle, AlertCircle, Mail, Pencil,
   CreditCard, X,
 } from "lucide-react";
-import { listCreditCardCutoffs, updateMe, upsertCreditCardCutoff } from "@/lib/api";
+import { listCreditCardCutoffs, updateMe, upsertCreditCardCutoff, getCreditCardBankExpenseCount, deleteCreditCardBank } from "@/lib/api";
 import { formatISODateOnlyLocal } from "@/lib/dateDisplay";
 import { useUser } from "@/lib/UserContext";
 import { normalizeCreditCardBanks, type CreditCardBankEntry, type CreditCardCutoffOverride } from "@/lib/types";
@@ -55,6 +55,12 @@ export default function ConfiguracionesPage() {
   const [cutoffDay, setCutoffDay] = useState<string>("");
   const [cutoffHistory, setCutoffHistory] = useState<CreditCardCutoffOverride[]>([]);
   const [savingCutoff, setSavingCutoff] = useState(false);
+
+  // ── Eliminar banco (con modal de confirmación) ─────────────────────────────
+  const [deleteBankTarget, setDeleteBankTarget] = useState<string | null>(null);
+  const [deleteBankExpenseCount, setDeleteBankExpenseCount] = useState<number | null>(null);
+  const [deleteBankLoading, setDeleteBankLoading] = useState(false);
+  const [deleteBankConfirming, setDeleteBankConfirming] = useState(false);
 
   const creditBanks = normalizeCreditCardBanks(user?.credit_card_banks ?? []);
 
@@ -168,18 +174,32 @@ export default function ConfiguracionesPage() {
     setAddBankOpen(false);
   }
 
-  async function handleRemoveBank(bankName: string) {
-    setSavingBanks(true);
+  async function openDeleteBankModal(bankName: string) {
+    setDeleteBankTarget(bankName);
+    setDeleteBankExpenseCount(null);
+    setDeleteBankLoading(true);
     try {
-      const updated = await updateMe({
-        credit_card_banks: creditBanks.filter((b) => b.name !== bankName),
-      });
-      setUser(updated);
-      showToast("success", "Banco quitado de la lista.");
-    } catch (err: unknown) {
-      showToast("error", err instanceof Error ? err.message : "Error al guardar");
+      const { expense_count } = await getCreditCardBankExpenseCount(bankName);
+      setDeleteBankExpenseCount(expense_count);
+    } catch {
+      setDeleteBankExpenseCount(0);
     } finally {
-      setSavingBanks(false);
+      setDeleteBankLoading(false);
+    }
+  }
+
+  async function confirmDeleteBank() {
+    if (!deleteBankTarget) return;
+    setDeleteBankConfirming(true);
+    try {
+      const updated = await deleteCreditCardBank(deleteBankTarget);
+      setUser(updated);
+      showToast("success", `Banco "${deleteBankTarget}" y sus gastos fueron eliminados.`);
+      setDeleteBankTarget(null);
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Error al eliminar");
+    } finally {
+      setDeleteBankConfirming(false);
     }
   }
 
@@ -311,6 +331,7 @@ export default function ConfiguracionesPage() {
   }
 
   return (
+    <>
     <div className="p-6 lg:p-8 space-y-8 text-slate-100 max-w-3xl">
       {/* Header */}
       <div>
@@ -469,7 +490,7 @@ export default function ConfiguracionesPage() {
                 <button
                   type="button"
                   disabled={savingBanks}
-                  onClick={() => handleRemoveBank(b.name)}
+                  onClick={() => openDeleteBankModal(b.name)}
                   className="-mr-1 -mt-0.5 shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-600/80 hover:text-red-400 disabled:opacity-50"
                   aria-label={`Quitar ${b.name}`}
                 >
@@ -804,6 +825,80 @@ export default function ConfiguracionesPage() {
         </form>
       </Section>
     </div>
+    {/* ── Modal confirmación eliminar banco ─────────────────────────────── */}
+    {deleteBankTarget && (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+        role="presentation"
+      >
+        <button
+          type="button"
+          className="absolute inset-0 min-h-[100dvh] w-full cursor-default bg-slate-950/75 backdrop-blur-md"
+          aria-label="Cerrar"
+          onClick={() => { if (!deleteBankConfirming) setDeleteBankTarget(null); }}
+        />
+        <div
+          className="relative z-10 w-full max-w-md rounded-2xl border border-slate-600/70 bg-[#1e293b]/95 p-6 shadow-2xl shadow-black/50 ring-1 ring-slate-700/40"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/15 ring-1 ring-red-500/25">
+              <CreditCard className="h-5 w-5 text-red-400" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-white">
+                Eliminar banco
+              </h2>
+              <p className="text-xs text-slate-400">Esta acción es irreversible</p>
+            </div>
+          </div>
+
+          <p className="mb-2 text-sm text-slate-200">
+            ¿Eliminar el banco{" "}
+            <span className="font-semibold text-white">{deleteBankTarget}</span>?
+          </p>
+
+          {deleteBankLoading ? (
+            <p className="mb-4 text-xs text-slate-400">Calculando gastos asociados…</p>
+          ) : deleteBankExpenseCount != null && deleteBankExpenseCount > 0 ? (
+            <div className="mb-4 rounded-xl border border-red-500/25 bg-red-500/10 p-3">
+              <p className="text-sm font-medium text-red-300">
+                Se eliminarán permanentemente{" "}
+                <span className="font-bold">
+                  {deleteBankExpenseCount} gasto{deleteBankExpenseCount !== 1 ? "s" : ""}
+                </span>{" "}
+                de tarjeta registrados con este banco.
+              </p>
+            </div>
+          ) : (
+            <p className="mb-4 text-xs text-slate-400">
+              No hay gastos asociados a este banco.
+            </p>
+          )}
+
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              disabled={deleteBankConfirming}
+              onClick={() => setDeleteBankTarget(null)}
+              className="rounded-xl border border-slate-600 bg-slate-700/60 px-4 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={deleteBankConfirming || deleteBankLoading}
+              onClick={confirmDeleteBank}
+              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-50"
+            >
+              {deleteBankConfirming ? "Eliminando…" : "Sí, eliminar"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

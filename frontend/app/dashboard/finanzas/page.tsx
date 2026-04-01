@@ -64,6 +64,8 @@ type FixedSectionRow =
   | { kind: "fixed"; item: FixedExpense }
   | { kind: "cc"; row: CreditCardBankMonthRow };
 
+function round2(n: number) { return Math.round(n * 100) / 100; }
+
 function formatCurrency(amount: number, currency = "ARS") {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
@@ -297,15 +299,26 @@ export default function FinanzasPage() {
         (r) =>
           !(r.paid ?? false) && ccDueUrgency(r, periodYear, periodMonth) === "overdue"
       );
-    const rows: FixedSectionRow[] = [
-      ...displayedFixedExpenses.map((item) => ({ kind: "fixed" as const, item })),
-      ...ccVisible.map((row) => ({ kind: "cc" as const, row })),
-    ];
-    rows.sort((a, b) => {
-      const na = a.kind === "fixed" ? a.item.name : a.row.label;
-      const nb = b.kind === "fixed" ? b.item.name : b.row.label;
+
+    // Separar CC por grupo de moneda (ARS primero, USD después)
+    const ccArs = ccVisible.filter((r) => (r.currency_group ?? "ARS") === "ARS");
+    const ccUsd = ccVisible.filter((r) => r.currency_group === "USD");
+
+    const fixedRows: FixedSectionRow[] = displayedFixedExpenses.map((item) => ({
+      kind: "fixed" as const,
+      item,
+    }));
+    fixedRows.sort((a, b) => {
+      const na = a.kind === "fixed" ? a.item.name : "";
+      const nb = b.kind === "fixed" ? b.item.name : "";
       return na.localeCompare(nb, "es", { sensitivity: "base" });
     });
+
+    const rows: FixedSectionRow[] = [
+      ...ccArs.map((row) => ({ kind: "cc" as const, row })),
+      ...ccUsd.map((row) => ({ kind: "cc" as const, row })),
+      ...fixedRows,
+    ];
     return rows;
   }, [displayedFixedExpenses, summary, fixedListFilter, periodYear, periodMonth]);
 
@@ -1124,9 +1137,11 @@ export default function FinanzasPage() {
                         urgency && leftCc != null ? formatUrgencyFromDaysLeft(leftCc) : "";
                       const soonRow = urgency === "soon" && !paidRow;
                       const overdueRow = urgency === "overdue" && !paidRow;
+                      const isUsd = row.currency_group === "USD";
+
                       return (
                         <li
-                          key={`cc-${row.bank}`}
+                          key={`cc-${row.bank_key}`}
                           className={`flex flex-wrap items-center gap-2 py-2.5 pl-1 first:pt-0 sm:gap-3 ${
                             paidRow
                               ? "rounded-lg bg-emerald-500/[0.06] ring-1 ring-emerald-500/15"
@@ -1150,7 +1165,7 @@ export default function FinanzasPage() {
                                 await setCreditCardPeriodPaid({
                                   year: periodYear,
                                   month: periodMonth,
-                                  bank: row.bank,
+                                  bank: row.bank_key,
                                   paid: e.target.checked,
                                 });
                                 await loadData();
@@ -1196,12 +1211,21 @@ export default function FinanzasPage() {
                               </div>
                             </div>
                           </div>
-                          <span
-                            className={`shrink-0 text-right tabular-nums ${
-                              paidRow ? "text-emerald-200/90" : "text-slate-300"
-                            }`}
-                          >
-                            {formatCurrency(row.amount, baseCurrency)}
+                          <span className="shrink-0 text-right tabular-nums">
+                            {isUsd ? (
+                              <>
+                                <span className={`block ${paidRow ? "text-emerald-200/90" : "text-slate-300"}`}>
+                                  {formatCurrency(row.amount, baseCurrency)}
+                                </span>
+                                <span className="block text-[11px] text-blue-400/80">
+                                  USD {new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(row.amount_usd!)}
+                                </span>
+                              </>
+                            ) : (
+                              <span className={paidRow ? "text-emerald-200/90" : "text-slate-300"}>
+                                {formatCurrency(row.amount, baseCurrency)}
+                              </span>
+                            )}
                           </span>
                           <span className="inline-flex shrink-0 gap-0" aria-hidden>
                             <span className="p-1.5 opacity-0">
@@ -1756,12 +1780,30 @@ export default function FinanzasPage() {
                           <h3 className="text-sm font-semibold tracking-tight text-slate-100">
                             {b.bank}
                           </h3>
-                          <span className="text-sm font-semibold tabular-nums text-emerald-300/95">
-                            {formatCurrency(b.total_due_this_month, ccDetail.base_currency)}
-                          </span>
+                          <div className="flex flex-col items-end gap-0.5">
+                            {b.total_ars_only != null && b.total_ars_only > 0 && (
+                              <span className="text-sm font-semibold tabular-nums text-emerald-300/95">
+                                {formatCurrency(b.total_ars_only, ccDetail.base_currency)}
+                              </span>
+                            )}
+                            {b.total_usd_this_month != null && b.total_usd_this_month > 0 && (
+                              <span className="text-sm font-semibold tabular-nums text-blue-300/90">
+                                USD {new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(b.total_usd_this_month)}
+                              </span>
+                            )}
+                            {(!b.total_ars_only || b.total_ars_only === 0) && (!b.total_usd_this_month || b.total_usd_this_month === 0) && (
+                              <span className="text-sm font-semibold tabular-nums text-emerald-300/95">
+                                {formatCurrency(b.total_due_this_month, ccDetail.base_currency)}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <ul className="space-y-2">
-                          {b.purchases.map((p) => (
+                        {(() => {
+                          const arsP = b.purchases.filter((p) => p.original_currency !== "USD");
+                          const usdP = b.purchases.filter((p) => p.original_currency === "USD");
+                          const hasBoth = arsP.length > 0 && usdP.length > 0;
+
+                          const renderPurchase = (p: typeof b.purchases[0]) => (
                             <li
                               key={`${p.expense_id}-${p.current_installment_index}`}
                               className="rounded-xl bg-slate-800/50 p-3 ring-1 ring-slate-700/50 transition hover:ring-slate-600/60"
@@ -1772,14 +1814,46 @@ export default function FinanzasPage() {
                                 {formatCurrency(p.installment_amount, ccDetail.base_currency)} este mes ·{" "}
                                 {p.installments_remaining_after} restantes después
                               </p>
+                              {p.original_currency === "USD" && p.original_installment_amount != null && p.exchange_rate_used != null && (
+                                <p className="mt-1 text-[11px] tabular-nums text-blue-400/80">
+                                  USD {new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(p.original_installment_amount)}{" "}
+                                  <span className="text-slate-500">×</span>{" "}
+                                  {new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(p.exchange_rate_used)}{" "}
+                                  <span className="text-slate-500">=</span>{" "}
+                                  {formatCurrency(p.installment_amount, ccDetail.base_currency)}
+                                </p>
+                              )}
                               <p className="mt-1.5 text-[11px] text-slate-400">
                                 Total compra:{" "}
                                 {formatCurrency(p.total_base, ccDetail.base_currency)} ·{" "}
                                 {new Date(p.purchase_date).toLocaleDateString("es-AR")}
                               </p>
                             </li>
-                          ))}
-                        </ul>
+                          );
+
+                          const separator = (label: string) => (
+                            <div className="flex items-center gap-2 py-0.5">
+                              <span className="h-px flex-1 bg-slate-700/60" />
+                              <span className="shrink-0 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+                                {label}
+                              </span>
+                              <span className="h-px flex-1 bg-slate-700/60" />
+                            </div>
+                          );
+
+                          return (
+                            <div className="space-y-2">
+                              {hasBoth && separator("Gastos en pesos")}
+                              {arsP.length > 0 && (
+                                <ul className="space-y-2">{arsP.map(renderPurchase)}</ul>
+                              )}
+                              {hasBoth && usdP.length > 0 && separator("Gastos en dólares")}
+                              {usdP.length > 0 && (
+                                <ul className="space-y-2">{usdP.map(renderPurchase)}</ul>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>

@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { PlusCircle, Save } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Plus, PlusCircle, Save } from "lucide-react";
 import { createExpense, previewExpenseInBase, updateExpense } from "@/lib/api";
 import { useUser } from "@/lib/UserContext";
 import {
   normalizeCreditCardBanks,
+  type CreditCardBankEntry,
   type Expense,
   type ExpenseBasePreview,
   type ExpenseCategory,
@@ -14,6 +15,7 @@ import {
   type PaymentMethod,
 } from "@/lib/types";
 import CategorySelect from "@/components/CategorySelect";
+import AddCreditCardBankModal from "@/components/AddCreditCardBankModal";
 
 function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat("es-AR", {
@@ -131,6 +133,8 @@ export default function ExpenseForm({
   const [error, setError] = useState("");
   const [basePreview, setBasePreview] = useState<ExpenseBasePreview | null>(null);
   const [basePreviewLoading, setBasePreviewLoading] = useState(false);
+  const [addBankModalOpen, setAddBankModalOpen] = useState(false);
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
   const baseCurrency = (user?.base_currency ?? "ARS").toUpperCase();
   const creditBanks = normalizeCreditCardBanks(user?.credit_card_banks ?? []);
@@ -189,7 +193,9 @@ export default function ExpenseForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setAttemptedSubmit(true);
     if (!description.trim() || !amount) return;
+    if (paymentMethod === "Tarjeta de crédito" && !creditCardBank.trim()) return;
 
     setError("");
     setLoading(true);
@@ -255,6 +261,7 @@ export default function ExpenseForm({
         setPaymentMethod("Otro");
         setCreditCardBank("");
         setCreditInstallments("1");
+        setAttemptedSubmit(false);
       }
     } catch (err: unknown) {
       setError(
@@ -379,55 +386,73 @@ export default function ExpenseForm({
         </div>
 
         {paymentMethod === "Tarjeta de crédito" && (
-          <div className="w-full">
-            <label className="mb-1.5 block text-xs font-medium text-slate-400">
-              Banco de la tarjeta
-            </label>
-            {creditBanks.length > 0 ? (
-              <select
-                value={creditCardBank}
-                onChange={(e) => setCreditCardBank(e.target.value)}
-                required
-                className="w-full rounded-xl border border-slate-600 bg-slate-700 px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Elegí un banco</option>
-                {creditCardBank.trim() &&
-                  !creditBanks.some((b) => b.name === creditCardBank.trim()) && (
-                    <option value={creditCardBank.trim()}>{creditCardBank.trim()} (guardado)</option>
-                  )}
-                {creditBanks.map((b) => (
-                  <option key={b.name} value={b.name}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <>
-                <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.07] px-3 py-3">
-                  <p className="text-xs font-semibold text-amber-200">
-                    Todavía no cargaste bancos con tarjeta
-                  </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
-                    Agregalos en Configuración para elegir el banco de una lista y registrar la fecha de corte por
-                    mes (mejor para cuotas y Finanzas). Podés seguir cargando el gasto escribiendo el banco abajo.
-                  </p>
-                  <Link
-                    href="/dashboard/configuraciones"
-                    className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-amber-600 px-3 py-2 text-center text-xs font-semibold text-white transition hover:bg-amber-500 sm:w-auto"
+          <div className="w-full space-y-3">
+            {/* Banco — requerido */}
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <label className="block text-xs font-medium text-slate-400">
+                  Banco de la tarjeta <span className="text-red-400">*</span>
+                </label>
+                {/* Botón agregar banco siempre visible cuando ya hay bancos */}
+                {creditBanks.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAddBankModalOpen(true)}
+                    className="flex items-center gap-1 text-[11px] font-medium text-blue-400 hover:text-blue-300 transition"
                   >
-                    Ir a Configuración — Bancos con tarjeta
-                  </Link>
-                </div>
-                <input
-                  type="text"
+                    <Plus className="h-3 w-3" />
+                    Agregar banco
+                  </button>
+                )}
+              </div>
+
+              {creditBanks.length > 0 ? (
+                <select
                   value={creditCardBank}
                   onChange={(e) => setCreditCardBank(e.target.value)}
-                  placeholder="Nombre del banco (ej. Galicia, Santander…)"
-                  className="w-full rounded-xl border border-slate-600 bg-slate-700 px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </>
-            )}
-            <div className="mt-3">
+                  required
+                  className={`w-full rounded-xl border px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-700 ${
+                    attemptedSubmit && !creditCardBank.trim()
+                      ? "border-red-500/40"
+                      : "border-slate-600"
+                  }`}
+                >
+                  <option value="">— Elegí un banco —</option>
+                  {creditCardBank.trim() &&
+                    !creditBanks.some((b) => b.name === creditCardBank.trim()) && (
+                      <option value={creditCardBank.trim()}>
+                        {creditCardBank.trim()} (guardado)
+                      </option>
+                    )}
+                  {creditBanks.map((b) => (
+                    <option key={b.name} value={b.name}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                /* Sin bancos configurados */
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.07] p-3">
+                  <p className="text-xs font-semibold text-amber-200">
+                    No tenés bancos configurados
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+                    Agregá tu banco para poder registrar gastos con tarjeta de crédito.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setAddBankModalOpen(true)}
+                    className="mt-2 flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-500"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Agregar banco ahora
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Cuotas */}
+            <div>
               <label className="mb-1.5 block text-xs font-medium text-slate-400">
                 Cuotas
               </label>
@@ -445,6 +470,21 @@ export default function ExpenseForm({
             </div>
           </div>
         )}
+
+        {/* El modal de agregar banco se monta en document.body via portal
+            para evitar el problema de forms anidados (HTML no los soporta). */}
+        {addBankModalOpen && typeof window !== "undefined" &&
+          createPortal(
+            <AddCreditCardBankModal
+              onClose={() => setAddBankModalOpen(false)}
+              onSuccess={(newBank: CreditCardBankEntry) => {
+                setAddBankModalOpen(false);
+                setCreditCardBank(newBank.name);
+              }}
+            />,
+            document.body
+          )
+        }
       </div>
 
       {error && (
@@ -466,9 +506,7 @@ export default function ExpenseForm({
             loading ||
             !description.trim() ||
             !amount ||
-            (paymentMethod === "Tarjeta de crédito" &&
-              creditBanks.length > 0 &&
-              !creditCardBank.trim())
+            (paymentMethod === "Tarjeta de crédito" && !creditCardBank.trim())
           }
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 px-4 text-sm font-semibold text-white transition-all hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-600"
         >

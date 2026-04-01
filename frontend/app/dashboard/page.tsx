@@ -141,12 +141,22 @@ function CreditCardDetailModal({
             <p className="mt-0.5 text-base font-bold text-red-300 tabular-nums">
               {fmtCurrency(overview.total_remaining, currency)}
             </p>
+            {overview.total_remaining_usd != null && overview.total_remaining_usd > 0 && (
+              <p className="mt-0.5 text-xs font-semibold text-orange-300 tabular-nums">
+                USD {overview.total_remaining_usd.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            )}
           </div>
           <div className="flex-1 rounded-xl bg-emerald-500/10 px-3 py-2 text-center">
             <p className="text-[11px] text-slate-400">Pagado hasta ahora</p>
             <p className="mt-0.5 text-base font-bold text-emerald-300 tabular-nums">
               {fmtCurrency(overview.total_paid, currency)}
             </p>
+            {overview.total_paid_usd != null && overview.total_paid_usd > 0 && (
+              <p className="mt-0.5 text-xs font-semibold text-emerald-400/70 tabular-nums">
+                USD {overview.total_paid_usd.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            )}
           </div>
         </div>
 
@@ -184,9 +194,16 @@ function CreditCardDetailModal({
                           {isCurrent && <span className="ml-1.5 text-[10px] text-amber-400/80 font-normal">este mes</span>}
                         </span>
                       </div>
-                      <span className={`text-sm font-semibold tabular-nums ${m.paid ? "text-emerald-300" : isCurrent ? "text-amber-300" : "text-slate-300"}`}>
-                        {fmtCurrency(m.amount, currency)}
-                      </span>
+                      <div className="text-right">
+                        <span className={`text-sm font-semibold tabular-nums ${m.paid ? "text-emerald-300" : isCurrent ? "text-amber-300" : "text-slate-300"}`}>
+                          {fmtCurrency(m.amount, currency)}
+                        </span>
+                        {m.amount_usd != null && m.amount_usd > 0 && (
+                          <p className="text-[11px] text-orange-300/80 tabular-nums">
+                            USD {m.amount_usd.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -195,47 +212,84 @@ function CreditCardDetailModal({
           </div>
 
           {/* Active purchases */}
-          {overview.active_purchases.length > 0 && (
-            <div className="px-4 pt-3 pb-2">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Compras activas
-              </p>
-              <div className="space-y-2">
-                {overview.active_purchases.map((p) => (
-                  <div key={p.expense_id} className="rounded-xl border border-slate-700/60 bg-slate-800/40 px-3 py-2.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-slate-200">{p.description}</p>
-                        <p className="text-[11px] text-slate-500">
-                          {new Date(p.purchase_date).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" })}
-                          {" · "}
-                          Primera cuota: {MONTH_NAMES_SHORT[p.first_installment_month - 1]} {p.first_installment_year}
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <p className="text-sm font-semibold text-slate-200 tabular-nums">
-                          {fmtCurrency(p.amount_per_installment, currency)}
-                          <span className="text-[11px] text-slate-500">/mes</span>
-                        </p>
-                        {p.installments > 1 ? (
-                          <>
-                            <p className="text-[11px] font-medium text-purple-400">
-                              {p.installments_remaining} de {p.installments} cuotas restantes
-                            </p>
-                            <p className="text-[11px] text-slate-500">
-                              Total restante: {fmtCurrency(p.amount_remaining, currency)}
-                            </p>
-                          </>
-                        ) : (
-                          <p className="text-[11px] text-slate-500">Pago único</p>
-                        )}
-                      </div>
-                    </div>
+          {overview.active_purchases.length > 0 && (() => {
+            const arsP = overview.active_purchases.filter((p) => p.original_currency !== "USD");
+            const usdP = overview.active_purchases.filter((p) => p.original_currency === "USD");
+            const renderPurchase = (p: typeof overview.active_purchases[0]) => (
+              <div key={p.expense_id} className="rounded-xl border border-slate-700/60 bg-slate-800/40 px-3 py-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-200">{p.description}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {new Date(p.purchase_date).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" })}
+                      {" · "}
+                      Primera cuota: {MONTH_NAMES_SHORT[p.first_installment_month - 1]} {p.first_installment_year}
+                    </p>
                   </div>
-                ))}
+                  <div className="shrink-0 text-right">
+                    {p.original_currency === "USD" && p.original_amount_per_installment != null ? (
+                      <p className="text-sm font-semibold text-orange-300 tabular-nums">
+                        USD {p.original_amount_per_installment.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <span className="text-[11px] text-slate-500">/mes</span>
+                      </p>
+                    ) : (
+                      <p className="text-sm font-semibold text-slate-200 tabular-nums">
+                        {fmtCurrency(p.amount_per_installment, currency)}
+                        <span className="text-[11px] text-slate-500">/mes</span>
+                      </p>
+                    )}
+                    {p.installments > 1 ? (
+                      <>
+                        <p className="text-[11px] font-medium text-purple-400">
+                          {p.installments_remaining} de {p.installments} cuotas restantes
+                        </p>
+                        {p.original_currency === "USD" && p.original_amount_remaining != null ? (
+                          <p className="text-[11px] text-slate-500 tabular-nums">
+                            Total restante: USD {p.original_amount_remaining.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-slate-500">
+                            Total restante: {fmtCurrency(p.amount_remaining, currency)}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-slate-500">Pago único</p>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            );
+            return (
+              <div className="px-4 pt-3 pb-2">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Compras activas
+                </p>
+                {arsP.length > 0 && (
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gastos en pesos</span>
+                      <div className="flex-1 h-px bg-slate-700/60" />
+                    </div>
+                    <div className="space-y-2 mb-3">
+                      {arsP.map(renderPurchase)}
+                    </div>
+                  </>
+                )}
+                {usdP.length > 0 && (
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-orange-400/70">Gastos en dólares</span>
+                      <div className="flex-1 h-px bg-orange-700/30" />
+                    </div>
+                    <div className="space-y-2">
+                      {usdP.map(renderPurchase)}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Past months (collapsible) */}
           {pastMonths.length > 0 && (
@@ -266,9 +320,16 @@ function CreditCardDetailModal({
                           {MONTH_NAMES[m.month - 1]} {m.year}
                         </span>
                       </div>
-                      <span className={`text-sm tabular-nums ${m.paid ? "text-emerald-400/80" : "text-red-400/80"}`}>
-                        {fmtCurrency(m.amount, currency)}
-                      </span>
+                      <div className="text-right">
+                        <span className={`text-sm tabular-nums ${m.paid ? "text-emerald-400/80" : "text-red-400/80"}`}>
+                          {fmtCurrency(m.amount, currency)}
+                        </span>
+                        {m.amount_usd != null && m.amount_usd > 0 && (
+                          <p className="text-[11px] text-orange-300/60 tabular-nums">
+                            USD {m.amount_usd.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -335,12 +396,22 @@ function CreditCardBankWidget({
           <p className="text-sm font-bold text-red-300 tabular-nums">
             {fmtCurrency(overview.total_remaining, currency)}
           </p>
+          {overview.total_remaining_usd != null && overview.total_remaining_usd > 0 && (
+            <p className="text-[10px] font-semibold text-orange-300 tabular-nums mt-0.5">
+              USD {overview.total_remaining_usd.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+          )}
         </div>
         <div className="rounded-xl bg-emerald-500/8 px-2.5 py-2">
           <p className="text-[10px] text-slate-400">Pagado</p>
           <p className="text-sm font-bold text-emerald-300 tabular-nums">
             {fmtCurrency(overview.total_paid, currency)}
           </p>
+          {overview.total_paid_usd != null && overview.total_paid_usd > 0 && (
+            <p className="text-[10px] font-semibold text-emerald-400/60 tabular-nums mt-0.5">
+              USD {overview.total_paid_usd.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+          )}
         </div>
       </div>
     </button>

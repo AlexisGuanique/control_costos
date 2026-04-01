@@ -850,6 +850,8 @@ def _credit_card_month_rows_for_period(
     expenses = session.exec(select(Expense).where(Expense.user_id == user_id)).all()
     cutoff_overrides = _cc_cutoff_overrides_map(session, user_id)
     by_bank: dict[str, float] = {}
+    by_bank_usd: dict[str, float] = {}
+    by_bank_ars_only: dict[str, float] = {}
     for e in expenses:
         if e.payment_method != PaymentMethod.TARJETA_CREDITO:
             continue
@@ -875,49 +877,59 @@ def _credit_card_month_rows_for_period(
         if portion <= 0:
             continue
         by_bank[bank] = round(by_bank.get(bank, 0.0) + portion, 2)
+        # Acumular monto en USD si el gasto fue en divisas; caso contrario ARS puro
+        orig_curr = (e.original_currency or "").upper()
+        if orig_curr == "USD" and e.original_amount is not None and e.original_amount > 0:
+            usd_portion = round(e.original_amount / n, 4)
+            by_bank_usd[bank] = round(by_bank_usd.get(bank, 0.0) + usd_portion, 4)
+        else:
+            by_bank_ars_only[bank] = round(by_bank_ars_only.get(bank, 0.0) + portion, 2)
     paid_map = _credit_card_paid_map(session, user_id, year, month)
     cfg_by_name = {
         e.name: e for e in _parse_credit_card_banks_from_stored(user.credit_card_banks)
     }
     rows: List[CreditCardBankMonthRow] = []
-    for b, a in sorted(by_bank.items(), key=lambda x: x[0].lower()):
+
+    def _build_row(
+        b: str, amount: float, bank_key: str, currency_group: str,
+        amount_usd: Optional[float] = None,
+    ) -> CreditCardBankMonthRow:
         cfg = cfg_by_name.get(b)
+        label = f"Pago Tarjeta {b}" if currency_group == "ARS" else f"Pago Tarjeta {b} USD"
+        paid = paid_map.get(bank_key, False)
         if cfg and cfg.due_mode == "business" and cfg.business_nth is not None:
-            rows.append(
-                CreditCardBankMonthRow(
-                    bank=b,
-                    amount=a,
-                    label=f"Pago Tarjeta {b}",
-                    paid=paid_map.get(b, False),
-                    due_mode="business",
-                    due_day=None,
-                    business_nth=cfg.business_nth,
-                )
+            return CreditCardBankMonthRow(
+                bank=b, bank_key=bank_key, amount=amount, label=label, paid=paid,
+                due_mode="business", due_day=None, business_nth=cfg.business_nth,
+                amount_usd=amount_usd, currency_group=currency_group,
             )
-        elif cfg and cfg.due_mode == "calendar" and cfg.due_day is not None:
-            rows.append(
-                CreditCardBankMonthRow(
-                    bank=b,
-                    amount=a,
-                    label=f"Pago Tarjeta {b}",
-                    paid=paid_map.get(b, False),
-                    due_mode="calendar",
-                    due_day=cfg.due_day,
-                    business_nth=None,
-                )
+        if cfg and cfg.due_mode == "calendar" and cfg.due_day is not None:
+            return CreditCardBankMonthRow(
+                bank=b, bank_key=bank_key, amount=amount, label=label, paid=paid,
+                due_mode="calendar", due_day=cfg.due_day, business_nth=None,
+                amount_usd=amount_usd, currency_group=currency_group,
             )
-        else:
-            rows.append(
-                CreditCardBankMonthRow(
-                    bank=b,
-                    amount=a,
-                    label=f"Pago Tarjeta {b}",
-                    paid=paid_map.get(b, False),
-                    due_mode=None,
-                    due_day=None,
-                    business_nth=None,
-                )
-            )
+        return CreditCardBankMonthRow(
+            bank=b, bank_key=bank_key, amount=amount, label=label, paid=paid,
+            due_mode=None, due_day=None, business_nth=None,
+            amount_usd=amount_usd, currency_group=currency_group,
+        )
+
+    for b in sorted(by_bank.keys(), key=lambda x: x.lower()):
+        ars_amt = by_bank_ars_only.get(b, 0.0)
+        usd_amt = by_bank_usd.get(b, 0.0)
+        usd_in_ars = round(by_bank[b] - ars_amt, 2)
+
+        if ars_amt > 0:
+            rows.append(_build_row(b, ars_amt, bank_key=b, currency_group="ARS"))
+        if usd_amt > 0:
+            rows.append(_build_row(
+                b, usd_in_ars, bank_key=f"{b}__USD",
+                currency_group="USD", amount_usd=usd_amt,
+            ))
+        if ars_amt == 0 and usd_amt == 0:
+            # Sólo debería pasar si hay cuotas en moneda no USD (raro), conservar comportamiento previo
+            rows.append(_build_row(b, by_bank[b], bank_key=b, currency_group="ARS"))
     return rows
 
 
@@ -938,9 +950,14 @@ def _credit_card_breakdown(
         first_y, first_m = _cc_first_installment_start_month(
             e, cutoff_overrides=cutoff_overrides
         )
+        orig_curr = (e.original_currency or "").upper()
+        is_usd = orig_curr == "USD" and e.original_amount is not None and e.original_amount > 0
+        rate = e.exchange_rate_used if e.exchange_rate_used else None
+
         if n <= 1:
             # Un solo pago: aparece solo en el mes del resumen (first_y/first_m).
             if (first_y, first_m) == (year, month):
+                usd_amt = round(e.original_amount, 2) if is_usd else None
                 line = CreditCardPurchaseLine(
                     expense_id=e.id,
                     description=e.description,
@@ -951,6 +968,9 @@ def _credit_card_breakdown(
                     current_installment_index=1,
                     installments_remaining_after=0,
                     purchase_date=e.created_at,
+                    original_currency=orig_curr if is_usd else None,
+                    original_installment_amount=usd_amt,
+                    exchange_rate_used=rate if is_usd else None,
                 )
                 by_bank.setdefault(bank, []).append(line)
         else:
@@ -961,6 +981,7 @@ def _credit_card_breakdown(
                 per = round(e.base_amount / n, 2)
                 idx = i + 1
                 remaining = n - idx
+                usd_per = round(e.original_amount / n, 2) if is_usd else None
                 line = CreditCardPurchaseLine(
                     expense_id=e.id,
                     description=e.description,
@@ -971,6 +992,9 @@ def _credit_card_breakdown(
                     current_installment_index=idx,
                     installments_remaining_after=remaining,
                     purchase_date=e.created_at,
+                    original_currency=orig_curr if is_usd else None,
+                    original_installment_amount=usd_per,
+                    exchange_rate_used=rate if is_usd else None,
                 )
                 by_bank.setdefault(bank, []).append(line)
 
@@ -978,8 +1002,10 @@ def _credit_card_breakdown(
     for bank in sorted(by_bank.keys(), key=lambda x: x.lower()):
         lines = sorted(by_bank[bank], key=lambda L: L.purchase_date, reverse=True)
         total = round(sum(L.installment_amount for L in lines), 2)
+        total_usd = round(sum(L.original_installment_amount for L in lines if L.original_installment_amount), 2) or None
+        total_ars_only = round(sum(L.installment_amount for L in lines if not L.original_currency), 2) or None
         banks_out.append(
-            CreditCardBankDetail(bank=bank, total_due_this_month=total, purchases=lines)
+            CreditCardBankDetail(bank=bank, total_due_this_month=total, purchases=lines, total_usd_this_month=total_usd, total_ars_only=total_ars_only)
         )
     return CreditCardBreakdown(
         year=year, month=month, base_currency=base_currency, banks=banks_out
@@ -1721,8 +1747,10 @@ def get_credit_card_overview(
     expenses = session.exec(select(Expense).where(Expense.user_id == current_user.id)).all()
     cutoff_overrides = _cc_cutoff_overrides_map(session, current_user.id)
 
-    # {bank: {(y,m): amount}}
+    # {bank: {(y,m): amount_ars}}
     by_bank_months: dict[str, dict[tuple[int, int], float]] = {}
+    # {bank: {(y,m): amount_usd}}
+    by_bank_months_usd: dict[str, dict[tuple[int, int], float]] = {}
     # {bank: [purchase_info]}
     by_bank_purchases: dict[str, list[dict]] = {}
 
@@ -1736,22 +1764,33 @@ def get_credit_card_overview(
         first_y, first_m = _cc_first_installment_start_month(e, cutoff_overrides=cutoff_overrides)
         per = round(e.base_amount / n, 2)
 
+        orig_curr = (e.original_currency or "").upper()
+        is_usd = orig_curr == "USD" and e.original_amount is not None and e.original_amount > 0
+        per_usd = round(e.original_amount / n, 4) if is_usd else None
+
         if bank not in by_bank_months:
             by_bank_months[bank] = {}
+            by_bank_months_usd[bank] = {}
             by_bank_purchases[bank] = []
 
-        # Acumular monto por mes
+        # Acumular monto por mes (ARS y USD separados)
         for i in range(n):
             ym = _add_months(first_y, first_m, i)
             amt = e.base_amount if n == 1 else per
             by_bank_months[bank][ym] = round(by_bank_months[bank].get(ym, 0.0) + amt, 2)
+            if is_usd:
+                usd_amt = e.original_amount if n == 1 else (per_usd or 0)
+                by_bank_months_usd[bank][ym] = round(
+                    by_bank_months_usd[bank].get(ym, 0.0) + usd_amt, 4
+                )
 
-        # Cuotas restantes = instalments cuyos meses >= hoy
+        # Cuotas restantes = installments cuyos meses >= hoy
         remaining_count = sum(
             1 for i in range(n)
             if _add_months(first_y, first_m, i) >= today_ym
         )
         amount_remaining = round(remaining_count * per, 2)
+        original_amount_remaining = round(remaining_count * (per_usd or 0), 4) if is_usd else None
 
         by_bank_purchases[bank].append({
             "expense_id": e.id,
@@ -1764,6 +1803,9 @@ def get_credit_card_overview(
             "first_installment_month": first_m,
             "installments_remaining": remaining_count,
             "amount_remaining": amount_remaining,
+            "original_currency": orig_curr if is_usd else None,
+            "original_amount_per_installment": per_usd,
+            "original_amount_remaining": original_amount_remaining,
         })
 
     # Mapa de meses pagados: {(bank, y, m)}
@@ -1780,16 +1822,33 @@ def get_credit_card_overview(
         months_list: list[CreditCardOverviewMonthEntry] = []
         total_paid = 0.0
         total_remaining = 0.0
+        total_paid_usd = 0.0
+        total_remaining_usd = 0.0
+        usd_months = by_bank_months_usd.get(bank, {})
 
         for (y, m), amt in sorted(by_bank_months[bank].items()):
-            is_paid = (bank, y, m) in paid_set
+            # ARS paid: check bank key "bank" (ARS row)
+            ars_paid = (bank, y, m) in paid_set
+            # USD paid: check bank key "bank__USD" (USD row)
+            usd_paid = (f"{bank}__USD", y, m) in paid_set
+            amount_usd = usd_months.get((y, m))
+
+            # Month paid = ARS paid (primary; USD tracked separately below)
             months_list.append(
-                CreditCardOverviewMonthEntry(year=y, month=m, amount=amt, paid=is_paid)
+                CreditCardOverviewMonthEntry(
+                    year=y, month=m, amount=amt, paid=ars_paid,
+                    amount_usd=round(amount_usd, 2) if amount_usd else None,
+                )
             )
-            if is_paid:
+            if ars_paid:
                 total_paid += amt
             else:
                 total_remaining += amt
+            if amount_usd:
+                if usd_paid:
+                    total_paid_usd += amount_usd
+                else:
+                    total_remaining_usd += amount_usd
 
         # Solo incluir compras activas (con cuotas en meses >= hoy)
         active = [
@@ -1804,6 +1863,8 @@ def get_credit_card_overview(
                 bank=bank,
                 total_paid=round(total_paid, 2),
                 total_remaining=round(total_remaining, 2),
+                total_paid_usd=round(total_paid_usd, 2) if total_paid_usd else None,
+                total_remaining_usd=round(total_remaining_usd, 2) if total_remaining_usd else None,
                 months=months_list,
                 active_purchases=active,
             )
@@ -1952,6 +2013,71 @@ def upsert_credit_card_cutoff(
             )
         )
     session.commit()
+
+
+@app.get("/finances/credit-cards/bank/{bank_name}/expense-count")
+def get_credit_card_bank_expense_count(
+    bank_name: str,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Devuelve cuántos gastos serían eliminados si se borra este banco."""
+    bank = bank_name.strip()
+    count = session.exec(
+        select(func.count(Expense.id)).where(
+            Expense.user_id == current_user.id,
+            Expense.payment_method == PaymentMethod.TARJETA_CREDITO,
+            Expense.credit_card_bank == bank,
+        )
+    ).one()
+    return {"bank": bank, "expense_count": count or 0}
+
+
+@app.delete("/finances/credit-cards/bank/{bank_name}", response_model=UserRead)
+def delete_credit_card_bank(
+    bank_name: str,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> UserRead:
+    """Elimina el banco del perfil Y todos los gastos de tarjeta asociados."""
+    bank = bank_name.strip()
+    if not bank:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nombre de banco inválido.",
+        )
+
+    # Eliminar todos los gastos de tarjeta de este banco
+    expenses_to_delete = session.exec(
+        select(Expense).where(
+            Expense.user_id == current_user.id,
+            Expense.payment_method == PaymentMethod.TARJETA_CREDITO,
+            Expense.credit_card_bank == bank,
+        )
+    ).all()
+    for e in expenses_to_delete:
+        session.delete(e)
+
+    # Eliminar overrides de cutoff para este banco
+    cutoffs = session.exec(
+        select(CreditCardCutoffOverride).where(
+            CreditCardCutoffOverride.user_id == current_user.id,
+            CreditCardCutoffOverride.bank == bank,
+        )
+    ).all()
+    for c in cutoffs:
+        session.delete(c)
+
+    # Remover el banco de la lista del usuario
+    current_banks = _parse_credit_card_banks_from_stored(current_user.credit_card_banks)
+    current_user.credit_card_banks = _normalize_credit_card_banks_for_storage(
+        [b for b in current_banks if b.name != bank]
+    )
+
+    session.add(current_user)
+    session.commit()
+    session.refresh(current_user)
+    return user_to_read(current_user)
 
 
 def _monthly_budget_read_from_row(row: MonthlyBudget) -> MonthlyBudgetRead:

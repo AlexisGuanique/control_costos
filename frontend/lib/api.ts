@@ -111,6 +111,24 @@ export async function updateMe(data: UserUpdate): Promise<User> {
   return handleResponse<User>(res);
 }
 
+export async function getCreditCardBankExpenseCount(
+  bankName: string
+): Promise<{ bank: string; expense_count: number }> {
+  const res = await fetch(
+    `${API_URL}/finances/credit-cards/bank/${encodeURIComponent(bankName)}/expense-count`,
+    { headers: authHeaders() }
+  );
+  return handleResponse<{ bank: string; expense_count: number }>(res);
+}
+
+export async function deleteCreditCardBank(bankName: string): Promise<User> {
+  const res = await fetch(
+    `${API_URL}/finances/credit-cards/bank/${encodeURIComponent(bankName)}`,
+    { method: "DELETE", headers: authHeaders() }
+  );
+  return handleResponse<User>(res);
+}
+
 // ─── Expenses ──────────────────────────────────────────────────────────────────
 
 export async function listExpenses(

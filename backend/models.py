@@ -467,12 +467,15 @@ class CreditCardBankMonthRow(SQLModel):
     """Cuota mensual por banco (para mostrar como “Pago Tarjeta …”)."""
 
     bank: str
+    bank_key: str
     amount: float
     label: str
     paid: bool = False
     due_mode: Optional[str] = None
     due_day: Optional[int] = None
     business_nth: Optional[int] = None
+    amount_usd: Optional[float] = None
+    currency_group: str = "ARS"
 
 
 class CreditCardPeriodPaidBody(SQLModel):
@@ -511,12 +514,17 @@ class CreditCardPurchaseLine(SQLModel):
     current_installment_index: int
     installments_remaining_after: int
     purchase_date: datetime
+    original_currency: Optional[str] = None
+    original_installment_amount: Optional[float] = None
+    exchange_rate_used: Optional[float] = None
 
 
 class CreditCardBankDetail(SQLModel):
     bank: str
     total_due_this_month: float
     purchases: List[CreditCardPurchaseLine] = Field(default_factory=list)
+    total_usd_this_month: Optional[float] = None
+    total_ars_only: Optional[float] = None
 
 
 class CreditCardBreakdown(SQLModel):
@@ -534,6 +542,7 @@ class CreditCardOverviewMonthEntry(SQLModel):
     month: int
     amount: float
     paid: bool
+    amount_usd: Optional[float] = None   # monto en USD si hay compras en divisa ese mes
 
 
 class CreditCardOverviewPurchase(SQLModel):
@@ -549,12 +558,17 @@ class CreditCardOverviewPurchase(SQLModel):
     # cuotas que caen en meses aún no pagados (incluyendo el mes actual si no está pagado)
     installments_remaining: int
     amount_remaining: float
+    original_currency: Optional[str] = None
+    original_amount_per_installment: Optional[float] = None   # cuota en USD
+    original_amount_remaining: Optional[float] = None          # total restante en USD
 
 
 class CreditCardBankOverview(SQLModel):
     bank: str
-    total_paid: float          # suma de meses marcados como pagados
-    total_remaining: float     # suma de meses sin pagar (pasados + presentes + futuros)
+    total_paid: float          # suma de meses ARS marcados como pagados
+    total_remaining: float     # suma de meses ARS sin pagar
+    total_paid_usd: Optional[float] = None      # ídem en USD
+    total_remaining_usd: Optional[float] = None
     months: List[CreditCardOverviewMonthEntry] = Field(default_factory=list)
     active_purchases: List[CreditCardOverviewPurchase] = Field(default_factory=list)
 

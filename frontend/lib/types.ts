@@ -169,6 +169,8 @@ export interface BudgetSummary {
 
 export interface CreditCardBankMonthRow {
   bank: string;
+  /** Clave única para estado pagado: igual a bank para ARS, bank+"__USD" para USD. */
+  bank_key: string;
   amount: number;
   label: string;
   /** Pagado este mes (misma semántica que un gasto fijo marcado). */
@@ -176,6 +178,10 @@ export interface CreditCardBankMonthRow {
   due_mode?: string | null;
   due_day?: number | null;
   business_nth?: number | null;
+  /** Para filas USD: monto en dólares originales. */
+  amount_usd?: number | null;
+  /** "ARS" o "USD" */
+  currency_group?: string;
 }
 
 export interface CreditCardPeriodPaidBody {
@@ -195,12 +201,17 @@ export interface CreditCardPurchaseLine {
   current_installment_index: number;
   installments_remaining_after: number;
   purchase_date: string;
+  original_currency?: string | null;
+  original_installment_amount?: number | null;
+  exchange_rate_used?: number | null;
 }
 
 export interface CreditCardBankDetail {
   bank: string;
   total_due_this_month: number;
   purchases: CreditCardPurchaseLine[];
+  total_usd_this_month?: number | null;
+  total_ars_only?: number | null;
 }
 
 export interface CreditCardBreakdown {
@@ -217,6 +228,7 @@ export interface CreditCardOverviewMonthEntry {
   month: number;
   amount: number;
   paid: boolean;
+  amount_usd?: number | null;
 }
 
 export interface CreditCardOverviewPurchase {
@@ -230,12 +242,17 @@ export interface CreditCardOverviewPurchase {
   first_installment_month: number;
   installments_remaining: number;
   amount_remaining: number;
+  original_currency?: string | null;
+  original_amount_per_installment?: number | null;
+  original_amount_remaining?: number | null;
 }
 
 export interface CreditCardBankOverview {
   bank: string;
   total_paid: number;
   total_remaining: number;
+  total_paid_usd?: number | null;
+  total_remaining_usd?: number | null;
   months: CreditCardOverviewMonthEntry[];
   active_purchases: CreditCardOverviewPurchase[];
 }
