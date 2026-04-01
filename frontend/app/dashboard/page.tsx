@@ -11,7 +11,7 @@ import {
   Wallet, CreditCard, ChevronDown, ChevronRight, ChevronLeft,
   AlertTriangle, CheckCircle2, X, Tag,
 } from "lucide-react";
-import { getStats, getRates, getBudgetSummary, getCreditCardOverview, listExpenses } from "@/lib/api";
+import { getStats, getRates, getBudgetSummary, getCreditCardOverview, getExpensesActiveInPeriod } from "@/lib/api";
 import { useUser } from "@/lib/UserContext";
 import type {
   ExpenseStats, DollarRate, BudgetSummary,
@@ -730,7 +730,7 @@ export default function DashboardPage() {
     setSelectedCategory(categoryName);
     setLoadingCategoryModal(true);
     try {
-      const all = await listExpenses(500, 0, periodYear, periodMonth);
+      const all = await getExpensesActiveInPeriod(periodYear, periodMonth);
       setCategoryExpenses(all.filter((e) => e.category === categoryName));
     } catch {
       setCategoryExpenses([]);

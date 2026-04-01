@@ -1160,6 +1160,53 @@ def list_expenses(
     return expenses
 
 
+@app.get("/expenses/active-in-period", response_model=List[ExpenseRead])
+def get_expenses_active_in_period(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> List[Expense]:
+    """
+    Devuelve todos los gastos que tienen impacto en el período (year, month):
+    - Gastos normales: creados en ese mes.
+    - Gastos con tarjeta de crédito: que tienen al menos una cuota en ese mes,
+      independientemente de cuándo fueron creados.
+    """
+    _validate_year_month(year, month)
+    all_expenses = session.exec(
+        select(Expense).where(Expense.user_id == current_user.id)
+    ).all()
+    cutoff_overrides = _cc_cutoff_overrides_map(session, current_user.id)
+
+    result: list[Expense] = []
+    for e in all_expenses:
+        if e.payment_method != PaymentMethod.TARJETA_CREDITO:
+            cy, cm = e.created_at.year, e.created_at.month
+            if (cy, cm) == (year, month):
+                result.append(e)
+        else:
+            bank_ok = bool((e.credit_card_bank or "").strip())
+            n = max(1, int(e.credit_installments or 1))
+            if not bank_ok:
+                cy, cm = e.created_at.year, e.created_at.month
+                if (cy, cm) == (year, month):
+                    result.append(e)
+            else:
+                first_y, first_m = _cc_first_installment_start_month(
+                    e, cutoff_overrides=cutoff_overrides
+                )
+                active = any(
+                    _add_months(first_y, first_m, i) == (year, month)
+                    for i in range(n)
+                )
+                if active:
+                    result.append(e)
+
+    result.sort(key=lambda e: e.created_at, reverse=True)
+    return result
+
+
 @app.get("/expenses/preview-base")
 async def preview_expense_in_base(
     original_amount: float = Query(..., gt=0),

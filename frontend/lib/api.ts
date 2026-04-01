@@ -149,6 +149,15 @@ export async function listExpenses(
   return handleResponse<Expense[]>(res);
 }
 
+export async function getExpensesActiveInPeriod(
+  year: number,
+  month: number,
+): Promise<Expense[]> {
+  const params = new URLSearchParams({ year: String(year), month: String(month) });
+  const res = await fetch(`${API_URL}/expenses/active-in-period?${params}`, { headers: authHeaders() });
+  return handleResponse<Expense[]>(res);
+}
+
 export async function previewExpenseInBase(
   originalAmount: number,
   originalCurrency: string
