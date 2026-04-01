@@ -1179,20 +1179,33 @@ def get_expenses_active_in_period(
     ).all()
     cutoff_overrides = _cc_cutoff_overrides_map(session, current_user.id)
 
+    seen_ids: set[int] = set()
     result: list[Expense] = []
+
+    def _add_if_new(e: Expense) -> None:
+        if e.id not in seen_ids:
+            seen_ids.add(e.id)
+            result.append(e)
+
     for e in all_expenses:
         if e.payment_method != PaymentMethod.TARJETA_CREDITO:
             cy, cm = e.created_at.year, e.created_at.month
             if (cy, cm) == (year, month):
-                result.append(e)
+                _add_if_new(e)
         else:
             bank_ok = bool((e.credit_card_bank or "").strip())
             n = max(1, int(e.credit_installments or 1))
             if not bank_ok:
                 cy, cm = e.created_at.year, e.created_at.month
                 if (cy, cm) == (year, month):
-                    result.append(e)
+                    _add_if_new(e)
             else:
+                # Incluir si fue comprado en este período
+                cy, cm = e.created_at.year, e.created_at.month
+                if (cy, cm) == (year, month):
+                    _add_if_new(e)
+                    continue
+                # O si tiene una cuota que cae en este período
                 first_y, first_m = _cc_first_installment_start_month(
                     e, cutoff_overrides=cutoff_overrides
                 )
@@ -1201,7 +1214,7 @@ def get_expenses_active_in_period(
                     for i in range(n)
                 )
                 if active:
-                    result.append(e)
+                    _add_if_new(e)
 
     result.sort(key=lambda e: e.created_at, reverse=True)
     return result
@@ -1588,16 +1601,19 @@ def get_stats(
         if not bank_ok:
             cy, cm = e.created_at.year, e.created_at.month
             return round(e.base_amount, 2) if (cy, cm) == (y, m) else 0.0
+        # Si la compra fue hecha en este período, incluirla con la cuota mensual
+        cy, cm = e.created_at.year, e.created_at.month
+        per = round(e.base_amount / n, 2)
+        if (cy, cm) == (y, m):
+            return per
+        # También incluir si una cuota de meses posteriores cae en este período
         first_y, first_m = _cc_first_installment_start_month(
             e, cutoff_overrides=cutoff_overrides
         )
-        if n <= 1:
-            return round(e.base_amount, 2) if (first_y, first_m) == (y, m) else 0.0
-        per = e.base_amount / n
         for i in range(n):
             y_m, m_m = _add_months(first_y, first_m, i)
             if (y_m, m_m) == (y, m):
-                return round(per, 2)
+                return per
         return 0.0
 
     total_month = round(
