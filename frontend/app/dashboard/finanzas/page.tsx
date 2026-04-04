@@ -798,33 +798,33 @@ export default function FinanzasPage() {
           </dl>
           {summary.salary_usd != null && summary.salary_cripto_rate_used != null && (
             <div className="mt-3 border-t border-slate-800/60 pt-3">
-              <p className="text-[11px] leading-relaxed text-slate-300">
-                Sueldo cargado: {formatUsd(summary.salary_usd)} · cotización guardada{" "}
-                <span className={
-                  criptoVenta != null && Math.abs(criptoVenta - summary.salary_cripto_rate_used) > 1
-                    ? "text-amber-400 font-semibold"
-                    : ""
-                }>
-                  {summary.salary_cripto_rate_used.toLocaleString("es-AR")}
-                </span>
-                {" "}→{" "}
-                <span className="text-slate-300">{formatCurrency(summary.salary, baseCurrency)}</span> en presupuesto
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] leading-relaxed text-slate-300">
+                  Sueldo cargado: {formatUsd(summary.salary_usd)} · cotización guardada{" "}
+                  <span className={
+                    criptoVenta != null && Math.abs(criptoVenta - summary.salary_cripto_rate_used) > 1
+                      ? "text-amber-400 font-semibold"
+                      : ""
+                  }>
+                    {summary.salary_cripto_rate_used.toLocaleString("es-AR")}
+                  </span>
+                  {" "}→{" "}
+                  <span className="text-slate-300">{formatCurrency(summary.salary, baseCurrency)}</span>
+                </p>
+                <button
+                  type="button"
+                  onClick={handleRefreshRate}
+                  disabled={updatingRate}
+                  className="shrink-0 rounded-lg bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-blue-400 hover:bg-slate-700 hover:text-blue-300 transition disabled:opacity-50"
+                >
+                  {updatingRate ? "Actualizando…" : "↻ Actualizar cotización"}
+                </button>
+              </div>
               {criptoVenta != null && Math.abs(criptoVenta - summary.salary_cripto_rate_used) > 1 && (
-                <div className="mt-2 flex items-center gap-3">
-                  <p className="text-[11px] text-amber-400/90">
-                    Cotización actual: {criptoVenta.toLocaleString("es-AR")} · diferencia{" "}
-                    {Math.round(summary.salary_usd * (criptoVenta - summary.salary_cripto_rate_used)).toLocaleString("es-AR")} ARS
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleRefreshRate}
-                    disabled={updatingRate}
-                    className="shrink-0 rounded-lg bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-400 hover:bg-amber-500/25 transition disabled:opacity-50"
-                  >
-                    {updatingRate ? "Actualizando…" : "Actualizar cotización"}
-                  </button>
-                </div>
+                <p className="mt-1.5 text-[11px] text-amber-400/90">
+                  Cotización actual: {criptoVenta.toLocaleString("es-AR")} · diferencia{" "}
+                  {Math.round(summary.salary_usd * (criptoVenta - summary.salary_cripto_rate_used)).toLocaleString("es-AR")} ARS
+                </p>
               )}
             </div>
           )}
