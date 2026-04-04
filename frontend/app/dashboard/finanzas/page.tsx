@@ -206,6 +206,7 @@ export default function FinanzasPage() {
   const [salaryCurrency, setSalaryCurrency] = useState<"USD" | "ARS">("USD");
   const [criptoVenta, setCriptoVenta] = useState<number | null>(null);
   const [savingSalary, setSavingSalary] = useState(false);
+  const [updatingRate, setUpdatingRate] = useState(false);
 
   const [fixedName, setFixedName] = useState("");
   const [fixedAmount, setFixedAmount] = useState("");
@@ -411,6 +412,25 @@ export default function FinanzasPage() {
     } else {
       setSalaryCurrency("ARS");
       setSalaryInput(String(summary.salary));
+    }
+  }
+
+  async function handleRefreshRate() {
+    if (!summary?.salary_usd) return;
+    setUpdatingRate(true);
+    setFormError(null);
+    try {
+      await upsertMonthlyBudget({
+        year: periodYear,
+        month: periodMonth,
+        salary: summary.salary_usd,
+        salary_currency: "USD",
+      });
+      await loadData();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Error al actualizar la cotización");
+    } finally {
+      setUpdatingRate(false);
     }
   }
 
@@ -777,11 +797,36 @@ export default function FinanzasPage() {
             </div>
           </dl>
           {summary.salary_usd != null && summary.salary_cripto_rate_used != null && (
-            <p className="mt-3 border-t border-slate-800/60 pt-3 text-[11px] leading-relaxed text-slate-300">
-              Sueldo cargado: {formatUsd(summary.salary_usd)} · cripto venta{" "}
-              {summary.salary_cripto_rate_used.toLocaleString("es-AR")} →{" "}
-              <span className="text-slate-300">{formatCurrency(summary.salary, baseCurrency)}</span> en presupuesto
-            </p>
+            <div className="mt-3 border-t border-slate-800/60 pt-3">
+              <p className="text-[11px] leading-relaxed text-slate-300">
+                Sueldo cargado: {formatUsd(summary.salary_usd)} · cotización guardada{" "}
+                <span className={
+                  criptoVenta != null && Math.abs(criptoVenta - summary.salary_cripto_rate_used) > 1
+                    ? "text-amber-400 font-semibold"
+                    : ""
+                }>
+                  {summary.salary_cripto_rate_used.toLocaleString("es-AR")}
+                </span>
+                {" "}→{" "}
+                <span className="text-slate-300">{formatCurrency(summary.salary, baseCurrency)}</span> en presupuesto
+              </p>
+              {criptoVenta != null && Math.abs(criptoVenta - summary.salary_cripto_rate_used) > 1 && (
+                <div className="mt-2 flex items-center gap-3">
+                  <p className="text-[11px] text-amber-400/90">
+                    Cotización actual: {criptoVenta.toLocaleString("es-AR")} · diferencia{" "}
+                    {Math.round(summary.salary_usd * (criptoVenta - summary.salary_cripto_rate_used)).toLocaleString("es-AR")} ARS
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleRefreshRate}
+                    disabled={updatingRate}
+                    className="shrink-0 rounded-lg bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-400 hover:bg-amber-500/25 transition disabled:opacity-50"
+                  >
+                    {updatingRate ? "Actualizando…" : "Actualizar cotización"}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </section>
       )}
